@@ -32,6 +32,7 @@
 #include "uds.h"
 #include "util.h"
 #include "wire.h"
+#include "wire_v2.h"
 
 namespace offload {
 
@@ -639,6 +640,38 @@ void OffloadDaemon::dispatch(int fd, OpCode op, const std::vector<uint8_t>& p) {
         }
         case OpCode::kShutdown: {
             body = encode(handle_shutdown(decode_ShutdownRequest(d, n)));
+            break;
+        }
+        case OpCode::kRegisterJob: {
+            body = encode(handle_register_job(decode_RegisterJobRequest(d, n)));
+            break;
+        }
+        case OpCode::kRequestCanonicalEvict: {
+            body = encode(handle_request_canonical_evict(
+                decode_RequestCanonicalEvictRequest(d, n)));
+            break;
+        }
+        case OpCode::kCommitCanonicalObject: {
+            body = encode(handle_commit_canonical_object(
+                decode_CommitCanonicalObjectRequest(d, n)));
+            break;
+        }
+        case OpCode::kSealModelVersion: {
+            body = encode(handle_seal_model_version(
+                decode_SealModelVersionRequest(d, n)));
+            break;
+        }
+        case OpCode::kGetLatestSealedVersion: {
+            body = encode(handle_get_latest_sealed_version(
+                decode_GetLatestSealedVersionRequest(d, n)));
+            break;
+        }
+        case OpCode::kGetManifest: {
+            body = encode(handle_get_manifest(decode_GetManifestRequest(d, n)));
+            break;
+        }
+        case OpCode::kPullTensor: {
+            body = encode(handle_pull_tensor(decode_PullTensorRequest(d, n)));
             break;
         }
         default:

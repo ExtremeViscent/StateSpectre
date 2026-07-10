@@ -38,6 +38,28 @@ const char* metric_name(Metric m) {
         case Metric::kChecksumMismatch: return "checksum_mismatch";
         case Metric::kIoFailure: return "io_failure";
         case Metric::kRankSessionsInvalidated: return "rank_sessions_invalidated";
+        case Metric::kJobsRegistered: return "jobs_registered_total";
+        case Metric::kCanonicalObjectsCreated: return "canonical_objects_created_total";
+        case Metric::kCanonicalAttachExisting: return "canonical_attach_existing_total";
+        case Metric::kCanonicalAttachWait: return "canonical_attach_wait_total";
+        case Metric::kCanonicalDuplicateCandidate: return "canonical_duplicate_candidate_total";
+        case Metric::kCanonicalDedupBytesSaved: return "canonical_dedup_bytes_saved";
+        case Metric::kCanonicalD2HBytesAvoided: return "canonical_d2h_bytes_avoided";
+        case Metric::kCanonicalHashMismatch: return "canonical_hash_mismatch_total";
+        case Metric::kCanonicalStaleVersionReject: return "canonical_stale_version_reject_total";
+        case Metric::kQuotaRejections: return "quota_rejections";
+        case Metric::kManifestSealed: return "manifest_sealed_total";
+        case Metric::kManifestSealFailed: return "manifest_seal_failed_total";
+        case Metric::kRolloutGetManifest: return "rollout_get_manifest_total";
+        case Metric::kRolloutPullTensor: return "rollout_pull_tensor_total";
+        case Metric::kRolloutPullBytes: return "rollout_pull_bytes_total";
+        case Metric::kRolloutStaleManifestReject: return "rollout_stale_manifest_reject_total";
+        case Metric::kExportInflightBytes: return "export_inflight_bytes";
+        case Metric::kExportStagingBytes: return "export_staging_bytes";
+        case Metric::kExportFromPinned: return "export_from_pinned_total";
+        case Metric::kExportFromPageable: return "export_from_pageable_total";
+        case Metric::kExportFromNvme: return "export_from_nvme_total";
+        case Metric::kExportTransportErrors: return "export_transport_errors_total";
         case Metric::kMetricCount: return "metric_count";
     }
     return "unknown";

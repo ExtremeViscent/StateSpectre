@@ -54,9 +54,29 @@ target_link_libraries(ofld_common PUBLIC Threads::Threads ${NUMA_LIB})
 # ------------------------- daemon lib -------------------------
 add_library(ofld_daemon STATIC
   ${DAEMON_DIR}/daemon.cpp
+  ${DAEMON_DIR}/canonical.cpp
+  ${DAEMON_DIR}/canonical_rollout.cpp
+  ${DAEMON_DIR}/export_backend.cpp
   ${DAEMON_DIR}/config.cpp)
 target_include_directories(ofld_daemon PUBLIC ${ABI_DIR} ${COMMON_DIR} ${DAEMON_DIR})
 target_link_libraries(ofld_daemon PUBLIC ofld_common ${URING_LIB})
+
+# Optional libfabric export backend (north_comm). Enable with:
+#   cmake -DOFLD_WITH_LIBFABRIC=ON -DNORTH_COMM_DIR=/path/to/north_comm
+# When off (default), PullTensor(libfabric) transparently falls back to TCP.
+option(OFLD_WITH_LIBFABRIC "Build the north_comm/libfabric export backend" OFF)
+if(OFLD_WITH_LIBFABRIC)
+  target_sources(ofld_daemon PRIVATE ${DAEMON_DIR}/export_libfabric.cpp)
+  target_compile_definitions(ofld_daemon PRIVATE OFLD_WITH_LIBFABRIC=1)
+  if(NORTH_COMM_DIR)
+    target_include_directories(ofld_daemon PRIVATE ${NORTH_COMM_DIR}/include)
+    find_library(NORTH_COMM_LIB north_comm
+                 PATHS ${NORTH_COMM_DIR}/python/north_comm/lib ${NORTH_COMM_DIR}/build)
+    if(NORTH_COMM_LIB)
+      target_link_libraries(ofld_daemon PUBLIC ${NORTH_COMM_LIB})
+    endif()
+  endif()
+endif()
 
 # ------------------------- daemon binary -------------------------
 add_executable(offloadd ${DAEMON_DIR}/main.cpp)
@@ -101,6 +121,10 @@ target_link_libraries(test_daemon_rpc PRIVATE ofld_daemon)
 add_executable(test_fault_injection tests/cpp/test_fault_injection.cpp)
 target_link_libraries(test_fault_injection PRIVATE ofld_daemon)
 
+# v2 canonical model-state integration test (live daemon + raw UDS client).
+add_executable(test_canonical tests/cpp/test_canonical.cpp)
+target_link_libraries(test_canonical PRIVATE ofld_daemon)
+
 # Functional GPU test: full evict/restore byte-correctness via the agent + a
 # live daemon. Requires a GPU and memfd_create (run outside restrictive sandbox).
 add_executable(test_evict_restore tests/cpp/test_evict_restore.cpp)
@@ -116,7 +140,9 @@ add_test(NAME config      COMMAND test_config)
 add_test(NAME layout      COMMAND test_layout)
 add_test(NAME daemon_rpc  COMMAND test_daemon_rpc)
 add_test(NAME fault_injection COMMAND test_fault_injection)
+add_test(NAME canonical    COMMAND test_canonical)
 add_test(NAME evict_restore COMMAND test_evict_restore)
 # Mark the GPU/memfd test so it can be excluded where unavailable:
 set_tests_properties(evict_restore PROPERTIES LABELS "gpu")
 set_tests_properties(daemon_rpc    PROPERTIES LABELS "memfd")
+set_tests_properties(canonical     PROPERTIES LABELS "memfd")

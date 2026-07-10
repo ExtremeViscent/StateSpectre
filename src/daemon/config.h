@@ -87,6 +87,51 @@ struct DaemonConfig {
     // Interval the daemon's ring-poller sleeps between sweeps (microseconds).
     uint32_t ring_poll_us = 50;
 
+    // -------------------------------------------------------------------
+    // v2 canonical model-state store (offload_manager_v2.yaml). All additive;
+    // when enable_canonical_store is false the daemon behaves exactly like v1.
+    // -------------------------------------------------------------------
+    bool v2_enable_canonical_store = true;
+    bool v2_enable_manifests = true;
+    bool v2_enable_rollout_export = true;
+
+    // namespace:
+    uint64_t v2_default_tenant_id = 0;
+    bool v2_require_job_registration = true;
+    bool v2_include_launch_epoch = true;
+
+    // canonical_store:
+    // dedup_default_mode: 0 disabled | 1 semantic_trusted | 2 hash_verified | 3 sampled_hash
+    uint32_t v2_dedup_default_mode = 1;
+    bool v2_cross_job_dedup = false;
+    // creating_policy: 0 wait | 1 duplicate_candidate_on_pressure
+    uint32_t v2_creating_policy = 0;
+    double v2_duplicate_candidate_gpu_pressure_threshold = 0.90;
+    uint64_t v2_sampled_hash_bytes_per_gib = 1ull << 20;
+
+    // manifest:
+    bool v2_seal_requires_all_objects_valid = true;
+    uint32_t v2_retain_sealed_versions = 4;
+
+    // export:
+    // default_transport: 1 tcp | 2 file | 3 libfabric_send
+    uint32_t v2_default_transport = 3;
+    uint32_t v2_fallback_transport = 1;
+    bool v2_use_dedicated_export_buffers = true;
+    bool v2_require_export_refcount = true;
+    uint32_t v2_max_concurrent_exports_per_job = 8;
+
+    // Optional TCP control endpoint for rollout engines (host-order port). 0
+    // disables; the daemon then serves canonical RPCs over the UDS only.
+    uint32_t v2_control_tcp_port = 0;
+
+    // default per-job quotas (0 == unlimited).
+    uint64_t v2_quota_max_pinned_bytes = 0;
+    uint64_t v2_quota_max_pageable_bytes = 0;
+    uint64_t v2_quota_max_nvme_bytes = 0;
+    uint64_t v2_quota_max_inflight_d2h_bytes = 0;
+    uint64_t v2_quota_max_inflight_export_bytes = 0;
+
     // Total slot count across all arenas is derived from arena sizes and
     // allocation granularity at build time; see BuildSlotPlan.
 };

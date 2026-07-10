@@ -30,9 +30,11 @@
 
 #include "offload_abi.h"
 #include "completion_ring.h"
+#include "canonical.h"
 #include "config.h"
 #include "control_layout.h"
 #include "protocol.h"
+#include "protocol_v2.h"
 
 namespace offload {
 
@@ -206,6 +208,38 @@ class OffloadDaemon {
     GetStatsResponse handle_get_stats(const GetStatsRequest& req);
     ShutdownResponse handle_shutdown(const ShutdownRequest& req);
 
+    // ------------------------------------------------------------------
+    // v2 canonical model-state RPC handlers (canonical.cpp). All additive; if
+    // cfg_.v2_enable_canonical_store is false they return a disabled error.
+    // ------------------------------------------------------------------
+    RegisterJobResponse handle_register_job(const RegisterJobRequest& req);
+    RequestCanonicalEvictResponse handle_request_canonical_evict(
+        const RequestCanonicalEvictRequest& req);
+    CommitCanonicalObjectResponse handle_commit_canonical_object(
+        const CommitCanonicalObjectRequest& req);
+    SealModelVersionResponse handle_seal_model_version(const SealModelVersionRequest& req);
+    GetLatestSealedVersionResponse handle_get_latest_sealed_version(
+        const GetLatestSealedVersionRequest& req);
+    GetManifestResponse handle_get_manifest(const GetManifestRequest& req);
+    PullTensorResponse handle_pull_tensor(const PullTensorRequest& req);
+
+    // ---- canonical helpers (mu_ held unless noted; canonical.cpp) ----
+    static std::string canonical_key_string(const CanonicalTensorKeyWire& k);
+    JobRecord* find_job(const JobUID& uid);            // nullptr if absent
+    JobRecord* find_job_by_wire(const JobKeyWire& jk);
+    CanonicalObject* find_object(uint64_t object_id);
+    CanonicalObject* find_object_by_key(const std::string& key_str);
+    // Resolve a canonical object's current physical bytes into a host-owned
+    // export staging buffer. Sets *ok; may unlock lk for NVMe/pageable IO.
+    std::vector<uint8_t> stage_object_for_export(
+        std::unique_lock<std::mutex>& lk, CanonicalObject& obj, bool* ok);
+    // 128-bit FNV-1a-based content hash (dedup verification + manifest hashing).
+    static void hash_bytes(const void* p, uint64_t n, uint64_t* lo, uint64_t* hi);
+    // Best-effort per-job pinned quota check.
+    bool quota_allows_pinned(const JobRecord& job, uint64_t nbytes) const;
+    // Release a canonical object's physical backing + table entry (mu_ held).
+    void release_object(CanonicalObject& obj);
+
     // Shared logic for a single D2H completion (used by MarkD2HComplete and
     // BatchComplete). Returns true if accepted. mu_ held.
     bool apply_d2h_complete(uint32_t rank_id, uint64_t rank_epoch,
@@ -288,6 +322,21 @@ class OffloadDaemon {
     uint64_t next_lease_id_ = 1;
     uint64_t next_rank_epoch_ = 1;
     uint64_t next_cold_ref_ = 1;
+
+    // ---- v2 canonical model-state tables (all under mu_) ----
+    // job identity -> record
+    std::unordered_map<JobUID, JobRecord, JobUIDHash> jobs_;
+    // object_id -> canonical object
+    std::unordered_map<uint64_t, CanonicalObject> objects_;
+    // serialized canonical key -> object_id (dedup lookup)
+    std::unordered_map<std::string, uint64_t> object_by_key_;
+    // (job, role, version) -> manifest
+    std::unordered_map<VersionKey, Manifest, VersionKeyHash> manifests_;
+    // (job, role) -> latest promoted sealed version (+present flag)
+    std::unordered_map<RoleKey, uint64_t, RoleKeyHash> latest_sealed_;
+    uint64_t next_job_id_ = 1;
+    uint64_t next_object_id_ = 1;
+    uint64_t next_launch_epoch_ = 1;
 
     // drain queue
     std::deque<DrainJob> drain_queue_;

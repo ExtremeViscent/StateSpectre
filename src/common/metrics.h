@@ -50,6 +50,31 @@ enum class Metric : int {
     kChecksumMismatch,
     kIoFailure,
     kRankSessionsInvalidated,
+
+    // ---- v2 canonical model-state (see 01-04 update docs) ----
+    kJobsRegistered,
+    kCanonicalObjectsCreated,
+    kCanonicalAttachExisting,
+    kCanonicalAttachWait,
+    kCanonicalDuplicateCandidate,
+    kCanonicalDedupBytesSaved,
+    kCanonicalD2HBytesAvoided,
+    kCanonicalHashMismatch,
+    kCanonicalStaleVersionReject,
+    kQuotaRejections,
+    kManifestSealed,
+    kManifestSealFailed,
+    kRolloutGetManifest,
+    kRolloutPullTensor,
+    kRolloutPullBytes,
+    kRolloutStaleManifestReject,
+    kExportInflightBytes,
+    kExportStagingBytes,
+    kExportFromPinned,
+    kExportFromPageable,
+    kExportFromNvme,
+    kExportTransportErrors,
+
     kMetricCount,
 };
 
