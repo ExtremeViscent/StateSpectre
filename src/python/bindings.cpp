@@ -319,11 +319,134 @@ class Context {
     int numa_node() const { return agent_->numa_node(); }
     std::uint32_t rank_id() const { return agent_->rank_id(); }
 
+    // ---- v2 canonical model-state API ------------------------------------
+    py::tuple register_job(std::uint64_t tenant_id, const std::string& job_name,
+                           std::uint64_t scheduler_job_id) {
+        offload::RegisterJobRequest req;
+        req.tenant_id = tenant_id;
+        req.job_name = job_name;
+        req.scheduler_job_id = scheduler_job_id;
+        offload::RegisterJobResponse r;
+        {
+            py::gil_scoped_release unlock;
+            r = agent_->register_job(req);
+        }
+        if (!r.ok) throw std::runtime_error("register_job failed: " + r.message);
+        job_ = r.job;
+        have_job_ = true;
+        return py::make_tuple(r.job.tenant_id, r.job.job_id, r.job.launch_epoch,
+                              r.job.job_name);
+    }
+
+    // Canonical evict (attach-or-create). Python supplies the fully built key
+    // (it computes shape/stride hashes + drops dp). Returns
+    // (ok, action, object_id, did_d2h, message).
+    py::tuple canonical_evict(
+        torch::Tensor t, bool destructive, bool allow_views, bool unsafe_autograd,
+        bool compact, bool wait, py::object stream_obj,
+        std::uint32_t model_role, std::uint64_t model_version,
+        std::uint64_t param_id, std::uint64_t param_fqn_hash,
+        const std::string& param_fqn_debug, std::uint32_t layout,
+        std::uint64_t shape_hash, std::uint64_t stride_hash,
+        std::uint32_t pp_rank, std::uint32_t tp_rank, std::uint32_t ep_rank,
+        std::uint32_t etp_rank, std::int32_t expert_id,
+        std::uint64_t shard_offset, std::uint64_t shard_nbytes,
+        std::uint32_t dedup_mode, bool allow_duplicate_candidate,
+        std::uint64_t local_tensor_id, std::uint64_t local_version) {
+        if (!t.is_cuda())
+            throw std::runtime_error("canonical_evict: tensor must be CUDA");
+        if (!have_job_)
+            throw std::runtime_error("canonical_evict: register_job() first");
+
+        const int device = agent_->cuda_device();
+        torch::Tensor source;
+        bool do_invalidate = destructive;
+        if (compact || allow_views) {
+            source = t.clone(at::MemoryFormat::Contiguous);
+        } else {
+            validate_destructive(t, unsafe_autograd);
+            source = t;
+        }
+        const std::uint64_t nbytes =
+            static_cast<std::uint64_t>(source.numel()) * source.element_size();
+        const std::uint64_t dev_ptr =
+            reinterpret_cast<std::uint64_t>(source.data_ptr());
+        const StreamHandle stream = resolve_stream(stream_obj, device);
+
+        offload::RequestCanonicalEvictRequest req;
+        req.key.job = job_;
+        req.key.model_role = model_role;
+        req.key.model_version = model_version;
+        req.key.param_id = param_id;
+        req.key.param_fqn_hash = param_fqn_hash;
+        req.key.param_fqn_debug = param_fqn_debug;
+        req.key.dtype = static_cast<std::uint32_t>(t.scalar_type());
+        req.key.layout = layout;
+        req.key.nbytes = nbytes;
+        req.key.shape_hash = shape_hash;
+        req.key.stride_hash = stride_hash;
+        req.key.pp_rank = pp_rank;
+        req.key.tp_rank = tp_rank;
+        req.key.ep_rank = ep_rank;
+        req.key.etp_rank = etp_rank;
+        req.key.expert_id = expert_id;
+        req.key.shard_offset = shard_offset;
+        req.key.shard_nbytes = shard_nbytes ? shard_nbytes : nbytes;
+        req.local_tensor_id = local_tensor_id;
+        req.local_version = local_version;
+        req.attach_if_exists = true;
+        req.create_if_missing = true;
+        req.dedup_mode = dedup_mode;
+        req.allow_duplicate_candidate = allow_duplicate_candidate;
+        req.alignment = 256;
+
+        InvalidateCallback cb =
+            [source, do_invalidate](std::uint64_t) mutable {
+                if (Py_IsFinalizing()) { source = torch::Tensor(); return; }
+                py::gil_scoped_acquire gil;
+                if (do_invalidate)
+                    source.set_data(torch::empty({0}, source.options()));
+                source = torch::Tensor();
+            };
+
+        const bool hash_on_commit =
+            (dedup_mode == 2u /*HASH_VERIFIED*/ || dedup_mode == 3u /*SAMPLED*/);
+
+        offload::CanonicalEvictResult res;
+        {
+            py::gil_scoped_release unlock;
+            res = agent_->canonical_evict(dev_ptr, nbytes, stream, destructive,
+                                          req, cb, /*cookie=*/local_tensor_id,
+                                          hash_on_commit, wait);
+        }
+        return py::make_tuple(res.ok, res.action, res.object_id, res.did_d2h,
+                              res.message);
+    }
+
+    py::tuple seal_model_version(std::uint32_t model_role,
+                                 std::uint64_t model_version, bool promote,
+                                 bool fail_if_missing) {
+        if (!have_job_) throw std::runtime_error("seal: register_job() first");
+        offload::SealModelVersionRequest req;
+        req.job = job_; req.model_role = model_role;
+        req.model_version = model_version; req.promote = promote;
+        req.fail_if_missing = fail_if_missing;
+        offload::SealModelVersionResponse r;
+        {
+            py::gil_scoped_release unlock;
+            r = agent_->seal_model_version(req);
+        }
+        return py::make_tuple(r.ok, r.state, r.tensor_count, r.total_nbytes,
+                              r.message);
+    }
+
     // Release the agent (joins threads, drains inflight, unmaps). Idempotent.
     void close() { agent_.reset(); }
 
  private:
     std::unique_ptr<OffloadAgent> agent_;
+    offload::JobKeyWire job_;
+    bool have_job_ = false;
     std::uint32_t rank_id_ = 0;
     std::atomic<std::uint64_t> local_tensor_ctr_{1};
 };
@@ -357,5 +480,21 @@ PYBIND11_MODULE(_fastoffload, m) {
         .def("cuda_device", &Context::cuda_device)
         .def("numa_node", &Context::numa_node)
         .def("rank_id", &Context::rank_id)
+        .def("register_job", &Context::register_job, py::arg("tenant_id"),
+             py::arg("job_name"), py::arg("scheduler_job_id"))
+        .def("canonical_evict", &Context::canonical_evict, py::arg("tensor"),
+             py::arg("destructive"), py::arg("allow_views"),
+             py::arg("unsafe_autograd"), py::arg("compact"), py::arg("wait"),
+             py::arg("stream"), py::arg("model_role"), py::arg("model_version"),
+             py::arg("param_id"), py::arg("param_fqn_hash"),
+             py::arg("param_fqn_debug"), py::arg("layout"), py::arg("shape_hash"),
+             py::arg("stride_hash"), py::arg("pp_rank"), py::arg("tp_rank"),
+             py::arg("ep_rank"), py::arg("etp_rank"), py::arg("expert_id"),
+             py::arg("shard_offset"), py::arg("shard_nbytes"),
+             py::arg("dedup_mode"), py::arg("allow_duplicate_candidate"),
+             py::arg("local_tensor_id"), py::arg("local_version"))
+        .def("seal_model_version", &Context::seal_model_version,
+             py::arg("model_role"), py::arg("model_version"), py::arg("promote"),
+             py::arg("fail_if_missing"))
         .def("close", &Context::close);
 }

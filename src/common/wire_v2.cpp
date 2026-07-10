@@ -139,6 +139,7 @@ std::vector<uint8_t> encode(const RequestCanonicalEvictResponse& m) {
     w.u32(m.action);
     w.u64(m.object_id); w.u64(m.lease_id); w.u32(m.slot_id);
     w.u64(m.arena_id); w.u64(m.arena_offset); w.u64(m.capacity);
+    w.u64(m.synthetic_tid);
     return b;
 }
 RequestCanonicalEvictResponse decode_RequestCanonicalEvictResponse(const uint8_t* d, size_t n) {
@@ -147,6 +148,7 @@ RequestCanonicalEvictResponse decode_RequestCanonicalEvictResponse(const uint8_t
     m.action = r.u32();
     m.object_id = r.u64(); m.lease_id = r.u64(); m.slot_id = r.u32();
     m.arena_id = r.u64(); m.arena_offset = r.u64(); m.capacity = r.u64();
+    m.synthetic_tid = r.u64();
     return m;
 }
 

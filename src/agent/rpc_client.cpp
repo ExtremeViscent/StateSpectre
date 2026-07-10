@@ -4,6 +4,7 @@
 
 #include "uds.h"
 #include "wire.h"
+#include "wire_v2.h"
 
 namespace offload {
 
@@ -128,6 +129,47 @@ GetStatsResponse RpcClient::get_stats(const GetStatsRequest& req) {
     std::vector<uint8_t> payload =
         round_trip(sock_, OpCode::kGetStats, encode(req), nullptr);
     return decode_GetStatsResponse(payload.data(), payload.size());
+}
+
+// ---- v2 canonical model-state ops ----
+RegisterJobResponse RpcClient::register_job(const RegisterJobRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kRegisterJob, encode(req), nullptr);
+    return decode_RegisterJobResponse(p.data(), p.size());
+}
+RequestCanonicalEvictResponse RpcClient::request_canonical_evict(
+    const RequestCanonicalEvictRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kRequestCanonicalEvict, encode(req), nullptr);
+    return decode_RequestCanonicalEvictResponse(p.data(), p.size());
+}
+CommitCanonicalObjectResponse RpcClient::commit_canonical_object(
+    const CommitCanonicalObjectRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kCommitCanonicalObject, encode(req), nullptr);
+    return decode_CommitCanonicalObjectResponse(p.data(), p.size());
+}
+SealModelVersionResponse RpcClient::seal_model_version(
+    const SealModelVersionRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kSealModelVersion, encode(req), nullptr);
+    return decode_SealModelVersionResponse(p.data(), p.size());
+}
+GetLatestSealedVersionResponse RpcClient::get_latest_sealed_version(
+    const GetLatestSealedVersionRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kGetLatestSealedVersion, encode(req), nullptr);
+    return decode_GetLatestSealedVersionResponse(p.data(), p.size());
+}
+GetManifestResponse RpcClient::get_manifest(const GetManifestRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kGetManifest, encode(req), nullptr);
+    return decode_GetManifestResponse(p.data(), p.size());
+}
+PullTensorResponse RpcClient::pull_tensor(const PullTensorRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kPullTensor, encode(req), nullptr);
+    return decode_PullTensorResponse(p.data(), p.size());
 }
 
 }  // namespace offload

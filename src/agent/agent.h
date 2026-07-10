@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "protocol_v2.h"
+
 namespace offload {
 
 // Opaque CUDA stream handle (a cudaStream_t reinterpreted as uintptr_t).
@@ -78,6 +80,17 @@ struct OffloadTicket {
 struct RestoreResult {
     bool ok = false;
     std::string message;
+};
+
+// Result of a canonical evict (attach-or-create). When action ==
+// NEED_D2H_CREATE the agent performed a D2H and committed the object; when
+// ATTACHED_EXISTING no D2H happened (bytes deduped). See offload_canonical_abi.
+struct CanonicalEvictResult {
+    bool ok = false;
+    std::string message;
+    uint32_t action = 0;        // AttachCreateAction
+    uint64_t object_id = 0;
+    bool did_d2h = false;
 };
 
 // Per-rank live summary (subset of METRICS.md per-rank block).
@@ -153,6 +166,31 @@ class OffloadAgent {
     int cuda_device() const;
     int numa_node() const;
     uint32_t rank_id() const;
+
+    // ---- v2 canonical model-state API ----
+    // Register this session's job. Fills the returned JobKeyWire (identity) so
+    // subsequent canonical keys carry it. Throws on RPC failure.
+    RegisterJobResponse register_job(const RegisterJobRequest& req);
+
+    // Canonical evict (attach-or-create). Reserves a canonical object via the
+    // daemon; on NEED_D2H_CREATE performs the GPU->pinned D2H (reusing the same
+    // event machinery as evict) and commits the object, optionally hashing the
+    // staged bytes for hash-verified dedup. On ATTACHED_EXISTING / WAIT no copy
+    // is done. `dev_ptr`/`nbytes` describe the source tensor; `invalidate_cb`
+    // fires after a real D2H completes (destructive path), like evict().
+    CanonicalEvictResult canonical_evict(uint64_t dev_ptr, uint64_t nbytes,
+                                         StreamHandle stream, bool destructive,
+                                         const RequestCanonicalEvictRequest& req,
+                                         InvalidateCallback invalidate_cb,
+                                         uint64_t cookie, bool hash_on_commit,
+                                         bool wait);
+
+    // Manifest / rollout control-plane passthroughs (used by trainer + rollout).
+    SealModelVersionResponse       seal_model_version(const SealModelVersionRequest& r);
+    GetLatestSealedVersionResponse get_latest_sealed_version(
+        const GetLatestSealedVersionRequest& r);
+    GetManifestResponse            get_manifest(const GetManifestRequest& r);
+    PullTensorResponse             pull_tensor(const PullTensorRequest& r);
 
  private:
     struct Impl;

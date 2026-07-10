@@ -119,6 +119,10 @@ struct RequestCanonicalEvictResponse {
     uint64_t arena_id = 0;
     uint64_t arena_offset = 0;
     uint64_t capacity = 0;
+    // Daemon-synthesized tensor_id backing this (candidate or canonical) slot.
+    // The rank passes it verbatim to MarkD2HSubmitted/Complete so the daemon's
+    // lease/tensor checks match; the rank never constructs it itself.
+    uint64_t synthetic_tid = 0;
 };
 
 struct CommitCanonicalObjectRequest {

@@ -28,7 +28,78 @@ __all__ = [
     "OffloadHandle",
     "PrefetchHandle",
     "ManagedRecord",
+    # v2 canonical model-state API
+    "CanonicalKey",
+    "DedupPolicy",
+    "ModelRole",
+    "CanonicalHandle",
+    "RolloutWeightClient",
 ]
+
+
+# --------------------------------------------------------------------------- #
+# v2 canonical model-state constants (mirror abi/offload_canonical_abi.hpp and
+# rpc/offload_canonical.proto — keep values in sync).
+# --------------------------------------------------------------------------- #
+class ModelRole:
+    UNKNOWN = 0
+    POLICY_TRAINABLE = 1
+    POLICY_ROLLOUT = 2
+    POLICY_REFERENCE = 3
+    REWARD_MODEL = 4
+    VALUE_MODEL = 5
+    AUXILIARY = 6
+
+    _BY_NAME = {
+        "unknown": 0, "policy_trainable": 1, "policy_rollout": 2,
+        "policy_reference": 3, "reward_model": 4, "value_model": 5,
+        "auxiliary": 6,
+    }
+
+    @classmethod
+    def parse(cls, role) -> int:
+        if isinstance(role, int):
+            return role
+        r = str(role).lower()
+        if r not in cls._BY_NAME:
+            raise ValueError(f"unknown model_role {role!r}; one of {list(cls._BY_NAME)}")
+        return cls._BY_NAME[r]
+
+
+# DedupMode numeric values (offload_canonical_abi.hpp DedupMode).
+_DEDUP_MODES = {
+    "disabled": 0, "semantic_trusted": 1, "hash_verified": 2, "sampled_hash": 3,
+}
+
+# AttachCreateAction numeric values (for interpreting canonical_evict results).
+_ACTION_ATTACHED_EXISTING = 0
+_ACTION_NEED_D2H_CREATE = 1
+_ACTION_WAIT_FOR_CREATOR = 2
+_ACTION_DUPLICATE_CANDIDATE = 3
+_ACTION_REJECTED_STALE_VERSION = 4
+_ACTION_QUOTA_EXCEEDED = 5
+_ACTION_ERROR = 255
+_ACTION_NAMES = {
+    0: "ATTACHED_EXISTING", 1: "NEED_D2H_CREATE", 2: "WAIT_FOR_CREATOR",
+    3: "DUPLICATE_CANDIDATE", 4: "REJECTED_STALE_VERSION", 5: "QUOTA_EXCEEDED",
+    255: "ERROR",
+}
+
+
+def _fnv1a64(data: bytes, seed: int = 1469598103934665603) -> int:
+    """64-bit FNV-1a over bytes (used for stable shape/stride/fqn hashing)."""
+    h = seed & 0xFFFFFFFFFFFFFFFF
+    for b in data:
+        h = ((h ^ b) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def _hash_ints(values) -> int:
+    buf = bytearray()
+    for v in values:
+        v = int(v) & 0xFFFFFFFFFFFFFFFF
+        buf += v.to_bytes(8, "little")
+    return _fnv1a64(bytes(buf))
 
 
 # --------------------------------------------------------------------------- #
@@ -270,6 +341,98 @@ class ManagedRecord:
 
 
 # --------------------------------------------------------------------------- #
+# v2 canonical model-state: key builder, dedup policy, handle
+# --------------------------------------------------------------------------- #
+class DedupPolicy:
+    """Deduplication policy for canonical model-state offload (02_DEDUP)."""
+
+    __slots__ = ("mode", "creating_policy", "cross_job_dedup")
+
+    def __init__(self, mode: str = "semantic_trusted",
+                 creating_policy: str = "wait",
+                 cross_job_dedup: bool = False):
+        if mode not in _DEDUP_MODES:
+            raise ValueError(f"mode must be one of {list(_DEDUP_MODES)}; got {mode!r}")
+        if creating_policy not in ("wait", "duplicate_candidate_on_pressure"):
+            raise ValueError("creating_policy must be 'wait' or "
+                             "'duplicate_candidate_on_pressure'")
+        self.mode = mode
+        self.creating_policy = creating_policy
+        self.cross_job_dedup = bool(cross_job_dedup)
+
+    @property
+    def mode_int(self) -> int:
+        return _DEDUP_MODES[self.mode]
+
+    @property
+    def allow_duplicate_candidate(self) -> bool:
+        return self.creating_policy == "duplicate_candidate_on_pressure"
+
+
+class CanonicalKey:
+    """Identity of one logical model-state shard at one model version.
+
+    Built via :meth:`Off.canonical_key`. The DP/replica axis is intentionally
+    excluded (that is what makes replicated ranks dedup); partition axes
+    (pp/tp/ep/etp/expert) are part of the identity. shape/stride/fqn are hashed
+    to stable 64-bit values so the daemon key is compact and language-neutral.
+    """
+
+    __slots__ = (
+        "model_role", "model_version", "param_id", "param_fqn_hash",
+        "param_fqn_debug", "layout", "shape_hash", "stride_hash",
+        "pp_rank", "tp_rank", "ep_rank", "etp_rank", "expert_id",
+        "shard_offset", "shard_nbytes",
+    )
+
+    def __init__(self, *, model_role, model_version, param_id, param_fqn_hash,
+                 param_fqn_debug, layout, shape_hash, stride_hash, pp_rank,
+                 tp_rank, ep_rank, etp_rank, expert_id, shard_offset,
+                 shard_nbytes):
+        self.model_role = int(model_role)
+        self.model_version = int(model_version)
+        self.param_id = int(param_id)
+        self.param_fqn_hash = int(param_fqn_hash)
+        self.param_fqn_debug = param_fqn_debug
+        self.layout = int(layout)
+        self.shape_hash = int(shape_hash)
+        self.stride_hash = int(stride_hash)
+        self.pp_rank = int(pp_rank)
+        self.tp_rank = int(tp_rank)
+        self.ep_rank = int(ep_rank)
+        self.etp_rank = int(etp_rank)
+        self.expert_id = int(expert_id)
+        self.shard_offset = int(shard_offset)
+        self.shard_nbytes = int(shard_nbytes)
+
+    def __repr__(self) -> str:
+        return (f"CanonicalKey(role={self.model_role}, version={self.model_version}, "
+                f"param_id={self.param_id}, fqn={self.param_fqn_debug!r}, "
+                f"pp={self.pp_rank}, tp={self.tp_rank}, ep={self.ep_rank}, "
+                f"expert={self.expert_id})")
+
+
+class CanonicalHandle:
+    """Result of a canonical evict. Carries the daemon object_id + outcome."""
+
+    __slots__ = ("object_id", "action", "action_name", "did_d2h", "attached",
+                 "key", "message")
+
+    def __init__(self, object_id, action, did_d2h, key, message):
+        self.object_id = int(object_id)
+        self.action = int(action)
+        self.action_name = _ACTION_NAMES.get(int(action), str(action))
+        self.did_d2h = bool(did_d2h)
+        self.attached = (int(action) == _ACTION_ATTACHED_EXISTING)
+        self.key = key
+        self.message = message
+
+    def __repr__(self) -> str:
+        return (f"CanonicalHandle(object_id={self.object_id}, "
+                f"action={self.action_name}, did_d2h={self.did_d2h})")
+
+
+# --------------------------------------------------------------------------- #
 # Off — the session object yielded by offload_context()
 # --------------------------------------------------------------------------- #
 class Off:
@@ -279,6 +442,123 @@ class Off:
         self._ctx = ctx
         self._device_index = device_index
         self._unsafe_default = False  # toggled by unsafe_destructive_mode()
+        # v2 job identity (set by _register_job via offload_context).
+        self.tenant_id = None
+        self.job_id = None
+        self.launch_epoch = None
+        self.job_name = None
+        self._dedup_policy = DedupPolicy()
+
+    # ---- v2 job registration --------------------------------------------- #
+    def _register_job(self, tenant_id: int, job_name: str,
+                      scheduler_job_id: int) -> None:
+        t, jid, epoch, name = self._ctx.register_job(
+            int(tenant_id), str(job_name), int(scheduler_job_id))
+        self.tenant_id = int(t)
+        self.job_id = int(jid)
+        self.launch_epoch = int(epoch)
+        self.job_name = name
+
+    def set_dedup_policy(self, policy: "DedupPolicy") -> None:
+        self._dedup_policy = policy
+
+    # ---- v2 canonical key builder ---------------------------------------- #
+    def canonical_key(self, *, model_role, model_version, param_name,
+                      param_id=None, tensor: torch.Tensor = None,
+                      pp_rank: int = 0, tp_rank: int = 0, ep_rank: int = 0,
+                      etp_rank: int = 0, expert_id: int = -1,
+                      shape=None, dtype=None, shard_offset: int = 0,
+                      shard_nbytes: int = None) -> CanonicalKey:
+        """Build a :class:`CanonicalKey`.
+
+        DP/replica rank is intentionally NOT an argument — that is the axis
+        deduplicated across. Partition axes (pp/tp/ep/etp/expert) ARE part of
+        the identity. shape/stride/param-name are hashed to stable 64-bit ints.
+        """
+        if tensor is not None:
+            shape = tuple(tensor.shape) if shape is None else tuple(shape)
+            stride = tuple(tensor.stride())
+            if shard_nbytes is None:
+                shard_nbytes = tensor.numel() * tensor.element_size()
+        else:
+            shape = tuple(shape or ())
+            stride = ()
+        if param_id is None:
+            param_id = _fnv1a64(param_name.encode("utf-8"))
+        fqn_hash = _fnv1a64(param_name.encode("utf-8"))
+        return CanonicalKey(
+            model_role=ModelRole.parse(model_role),
+            model_version=int(model_version),
+            param_id=int(param_id),
+            param_fqn_hash=fqn_hash,
+            param_fqn_debug=param_name,
+            layout=0,
+            shape_hash=_hash_ints(shape),
+            stride_hash=_hash_ints(stride),
+            pp_rank=pp_rank, tp_rank=tp_rank, ep_rank=ep_rank, etp_rank=etp_rank,
+            expert_id=expert_id, shard_offset=shard_offset,
+            shard_nbytes=int(shard_nbytes or 0),
+        )
+
+    # ---- v2 canonical evict ---------------------------------------------- #
+    def canonical_evict(self, tensor: torch.Tensor, canonical_key: CanonicalKey,
+                        dedup: str = "attach_or_create", destructive: bool = True,
+                        stream=None, wait: bool = True,
+                        allow_views: bool = False, unsafe_autograd: bool = False,
+                        compact: bool = False,
+                        local_tensor_id: int = 0, local_version: int = 1,
+                        dedup_policy: "DedupPolicy" = None) -> CanonicalHandle:
+        """Attach-or-create a canonical object for ``tensor``.
+
+        With ``dedup="attach_or_create"`` the daemon returns ATTACHED_EXISTING
+        (no D2H — bytes deduped), NEED_D2H_CREATE (this rank creates + D2Hs),
+        WAIT_FOR_CREATOR, or DUPLICATE_CANDIDATE. See 02_DEDUPLICATION_POLICY.md.
+        """
+        if self.job_id is None:
+            raise RuntimeError("canonical_evict: context has no job; pass "
+                               "job_name to offload_context()")
+        pol = dedup_policy or self._dedup_policy
+        if dedup == "disabled":
+            mode = 0
+        else:
+            mode = pol.mode_int
+        eff_unsafe = unsafe_autograd or self._unsafe_default
+        k = canonical_key
+        ok, action, object_id, did_d2h, message = self._ctx.canonical_evict(
+            tensor, bool(destructive), bool(allow_views), bool(eff_unsafe),
+            bool(compact), bool(wait), stream,
+            k.model_role, k.model_version, k.param_id, k.param_fqn_hash,
+            k.param_fqn_debug, k.layout, k.shape_hash, k.stride_hash,
+            k.pp_rank, k.tp_rank, k.ep_rank, k.etp_rank, k.expert_id,
+            k.shard_offset, k.shard_nbytes, int(mode),
+            bool(pol.allow_duplicate_candidate),
+            int(local_tensor_id), int(local_version),
+        )
+        if not ok:
+            raise RuntimeError(
+                f"canonical_evict failed (action={_ACTION_NAMES.get(action, action)}): "
+                f"{message}")
+        return CanonicalHandle(object_id, action, did_d2h, canonical_key, message)
+
+    # ---- v2 seal / promote ----------------------------------------------- #
+    def seal_model_version(self, model_role, model_version: int,
+                           fail_if_missing: bool = True,
+                           promote: bool = False) -> dict:
+        """Seal a model version into an immutable manifest (optionally promote)."""
+        ok, state, tensor_count, total_nbytes, message = self._ctx.seal_model_version(
+            ModelRole.parse(model_role), int(model_version), bool(promote),
+            bool(fail_if_missing))
+        if not ok:
+            raise RuntimeError(f"seal_model_version failed: {message}")
+        return {"state": state, "tensor_count": tensor_count,
+                "total_nbytes": total_nbytes, "message": message}
+
+    def promote_rollout_version(self, model_version: int,
+                                fail_if_missing: bool = True) -> dict:
+        """Seal POLICY_ROLLOUT@version and atomically set the latest pointer."""
+        return self.seal_model_version(ModelRole.POLICY_ROLLOUT, model_version,
+                                       fail_if_missing=fail_if_missing,
+                                       promote=True)
 
     # ---- internal helpers ------------------------------------------------- #
     @staticmethod
@@ -482,13 +762,20 @@ def offload_context(daemon_addr: str = "unix:///tmp/fastoffload.sock",
                     registration_chunk_mb: int = 512,
                     target_tier: str = "pageable_then_nvme",
                     invalidate_mode: str = "set_empty",
-                    eager_register: bool = False):
-    """Manage an offload runtime session (PYTHON_API §2).
+                    eager_register: bool = False,
+                    job_name: Optional[str] = None,
+                    tenant_id: int = 0,
+                    scheduler_job_id=None,
+                    dedup_policy: Optional["DedupPolicy"] = None):
+    """Manage an offload runtime session (PYTHON_API §2 + v2 canonical §Job).
 
     Connects to the daemon, receives arena/control fds, mmaps them,
     cudaHostRegisters lazily/eagerly, and starts the completion progress thread —
     all inside the C++ OffloadAgent. On exit it best-effort drains inflight
     transfers and closes the agent.
+
+    If ``job_name`` is given the session registers a v2 job; the daemon assigns
+    ``off.job_id`` / ``off.launch_epoch`` and canonical evicts become available.
 
     Yields an :class:`Off` session object.
     """
@@ -504,6 +791,11 @@ def offload_context(daemon_addr: str = "unix:///tmp/fastoffload.sock",
         int(numa_node), int(chunk_bytes), bool(eager),
     )
     off = Off(ctx, device_index)
+    if dedup_policy is not None:
+        off.set_dedup_policy(dedup_policy)
+    if job_name is not None:
+        sched = 0 if scheduler_job_id is None else int(scheduler_job_id)
+        off._register_job(tenant_id, job_name, sched)
     try:
         yield off
     finally:
@@ -513,3 +805,10 @@ def offload_context(daemon_addr: str = "unix:///tmp/fastoffload.sock",
         except Exception:
             pass
         ctx.close()
+
+
+# --------------------------------------------------------------------------- #
+# RolloutWeightClient — imported at end to avoid a circular import (_rollout
+# references ModelRole from this module).
+# --------------------------------------------------------------------------- #
+from ._rollout import RolloutWeightClient  # noqa: E402,F401

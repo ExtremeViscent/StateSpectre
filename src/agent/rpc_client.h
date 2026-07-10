@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "protocol.h"
+#include "protocol_v2.h"
 
 namespace offload {
 
@@ -47,6 +48,18 @@ class RpcClient {
     BatchCompleteResponse     batch_complete(const BatchCompleteRequest& req);
     HeartbeatResponse         heartbeat(const HeartbeatRequest& req);
     GetStatsResponse          get_stats(const GetStatsRequest& req);
+
+    // v2 canonical model-state ops.
+    RegisterJobResponse            register_job(const RegisterJobRequest& req);
+    RequestCanonicalEvictResponse  request_canonical_evict(
+        const RequestCanonicalEvictRequest& req);
+    CommitCanonicalObjectResponse  commit_canonical_object(
+        const CommitCanonicalObjectRequest& req);
+    SealModelVersionResponse       seal_model_version(const SealModelVersionRequest& req);
+    GetLatestSealedVersionResponse get_latest_sealed_version(
+        const GetLatestSealedVersionRequest& req);
+    GetManifestResponse            get_manifest(const GetManifestRequest& req);
+    PullTensorResponse             pull_tensor(const PullTensorRequest& req);
 
     int sock() const { return sock_; }
 

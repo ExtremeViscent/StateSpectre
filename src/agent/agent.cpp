@@ -35,6 +35,7 @@
 #include "metrics.h"
 #include "numa_util.h"
 #include "offload_abi.h"
+#include "offload_canonical_abi.hpp"
 #include "protocol.h"
 #include "rpc_client.h"
 #include "uds.h"
@@ -42,9 +43,29 @@
 
 namespace offload {
 
+// The v2 AttachCreateAction enum values live in namespace offload_v2 (see
+// abi/offload_canonical_abi.hpp). canonical_evict() compares against them.
+using namespace offload_v2;
+
 namespace {
 
 constexpr const char* kTag = "agent";
+
+// 128-bit content hash of a host buffer. MUST match the daemon's hash_bytes()
+// (canonical.cpp) byte-for-byte so hash-verified dedup compares equal across
+// the wire. Two seeded FNV-1a streams.
+inline void hash_host_bytes(const void* p, uint64_t n, uint64_t* lo, uint64_t* hi) {
+    const uint8_t* b = static_cast<const uint8_t*>(p);
+    uint64_t h1 = 1469598103934665603ull;
+    uint64_t h2 = 1099511628211ull;
+    for (uint64_t i = 0; i < n; ++i) {
+        h1 = (h1 ^ b[i]) * 1099511628211ull;
+        h2 = (h2 ^ b[i]) * 1099511628211ull;
+        h2 = (h2 << 1) | (h2 >> 63);
+    }
+    *lo = h1;
+    *hi = h2;
+}
 
 // Throwing CUDA error check. agent.cpp only calls the CUDA *runtime API* (no
 // kernels), so plain g++ + libcudart is sufficient.
@@ -1108,5 +1129,153 @@ void OffloadAgent::discard(uint64_t tensor_id, uint64_t version) {
 int OffloadAgent::cuda_device() const { return impl_->device; }
 int OffloadAgent::numa_node() const { return impl_->numa; }
 uint32_t OffloadAgent::rank_id() const { return impl_->rank_id; }
+
+// ---------------------------------------------------------------------------
+// v2 canonical model-state API
+// ---------------------------------------------------------------------------
+RegisterJobResponse OffloadAgent::register_job(const RegisterJobRequest& req) {
+    return impl_->rpc->register_job(req);
+}
+
+CanonicalEvictResult OffloadAgent::canonical_evict(
+    uint64_t dev_ptr, uint64_t nbytes, StreamHandle stream, bool destructive,
+    const RequestCanonicalEvictRequest& in_req, InvalidateCallback invalidate_cb,
+    uint64_t cookie, bool hash_on_commit, bool wait) {
+    Impl* d = impl_.get();
+    CanonicalEvictResult out;
+
+    cudaStream_t s = (stream == kInternalStream)
+                         ? d->internal_stream
+                         : reinterpret_cast<cudaStream_t>(stream);
+
+    // Fill in rank identity + placement on the request.
+    RequestCanonicalEvictRequest req = in_req;
+    req.rank_id = d->rank_id;
+    req.rank_epoch = d->rank_epoch;
+    req.gpu_id = static_cast<uint32_t>(d->device);
+    req.numa_node = static_cast<uint32_t>(d->numa);
+    req.destructive = destructive;
+    req.key.nbytes = nbytes;              // authoritative byte count
+    if (req.key.shard_nbytes == 0) req.key.shard_nbytes = nbytes;
+
+    RequestCanonicalEvictResponse resp = d->rpc->request_canonical_evict(req);
+    if (!resp.ok) {
+        out.ok = false; out.action = resp.action; out.message = resp.message;
+        return out;
+    }
+    out.action = resp.action;
+    out.object_id = resp.object_id;
+
+    // Attach paths perform NO D2H. The caller may invalidate its local tensor
+    // at a safe point (the bytes already live in the canonical object).
+    if (resp.action == ATTACH_ACTION_ATTACHED_EXISTING ||
+        resp.action == ATTACH_ACTION_WAIT_FOR_CREATOR) {
+        out.ok = true;
+        out.did_d2h = false;
+        out.message = resp.message;
+        // For ATTACHED_EXISTING with a destructive request, drop the local
+        // storage now (safe: canonical bytes are valid). WAIT leaves the tensor
+        // intact so the caller can retry.
+        if (resp.action == ATTACH_ACTION_ATTACHED_EXISTING && destructive &&
+            invalidate_cb) {
+            invalidate_cb(cookie);
+        }
+        return out;
+    }
+    if (resp.action != ATTACH_ACTION_NEED_D2H_CREATE &&
+        resp.action != ATTACH_ACTION_DUPLICATE_CANDIDATE) {
+        out.ok = false; out.message = resp.message;   // quota/stale/error
+        return out;
+    }
+
+    // NEED_D2H_CREATE or DUPLICATE_CANDIDATE: perform the GPU->pinned D2H into
+    // the reserved slot, then commit. Reuses the same event machinery as evict.
+    const uint64_t syn_tid = resp.synthetic_tid;
+    void* dst = d->slot_host_ptr(resp.arena_id, resp.arena_offset);
+    d->ensure_registered(reinterpret_cast<uint64_t>(dst), nbytes);
+    d->evict_count.fetch_add(1, std::memory_order_relaxed);
+
+    uint64_t submit_seq = d->submit_seq_ctr.fetch_add(1, std::memory_order_relaxed);
+    {
+        MarkD2HSubmittedRequest sr;
+        sr.rank_id = d->rank_id; sr.rank_epoch = d->rank_epoch;
+        sr.lease_id = resp.lease_id; sr.tensor_id = syn_tid;
+        sr.version = 1; sr.slot_id = resp.slot_id;
+        sr.submit_seq = submit_seq; sr.timestamp_ns = now_real_ns();
+        try { d->rpc->mark_d2h_submitted(sr); }
+        catch (const std::exception& e) {
+            OFLD_WARN(kTag, "canonical MarkD2HSubmitted failed (proceeding): %s", e.what());
+        }
+    }
+
+    CUDA_CHECK(cudaMemcpyAsync(dst, reinterpret_cast<const void*>(dev_ptr), nbytes,
+                               cudaMemcpyDeviceToHost, s));
+    cudaEvent_t ev;
+    CUDA_CHECK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventRecord(ev, s));
+    // Canonical create is synchronous w.r.t. the commit: we must wait for the
+    // D2H so the daemon sees PINNED_VALID before CommitCanonicalObject, and so
+    // we can hash the staged bytes if requested. (The VRAM-release critical
+    // path is the D2H itself; the commit RPC is metadata-only.)
+    CUDA_CHECK(cudaEventSynchronize(ev));
+    CUDA_CHECK(cudaEventDestroy(ev));
+
+    // MarkD2HComplete on the synthetic tid -> slot becomes PINNED_VALID and the
+    // daemon publishes locations_[syn_tid].
+    {
+        MarkD2HCompleteRequest cr;
+        cr.rank_id = d->rank_id; cr.rank_epoch = d->rank_epoch;
+        cr.lease_id = resp.lease_id; cr.tensor_id = syn_tid;
+        cr.version = 1; cr.slot_id = resp.slot_id;
+        cr.complete_seq = d->complete_seq_ctr.fetch_add(1, std::memory_order_relaxed);
+        cr.timestamp_ns = now_real_ns();
+        try {
+            MarkD2HCompleteResponse dr = d->rpc->mark_d2h_complete(cr);
+            if (!dr.ok) OFLD_WARN(kTag, "canonical MarkD2HComplete ok=false: %s",
+                                  dr.message.c_str());
+        } catch (const std::exception& e) {
+            out.ok = false; out.message = std::string("d2h complete rpc: ") + e.what();
+            return out;
+        }
+    }
+
+    uint64_t hlo = 0, hhi = 0;
+    if (hash_on_commit) {
+        // Hash the staged host bytes (post-D2H) for hash-verified dedup.
+        hash_host_bytes(dst, nbytes, &hlo, &hhi);
+    }
+
+    CommitCanonicalObjectRequest cm;
+    cm.rank_id = d->rank_id; cm.rank_epoch = d->rank_epoch;
+    cm.object_id = resp.object_id; cm.lease_id = resp.lease_id;
+    cm.slot_id = resp.slot_id; cm.content_hash_lo = hlo; cm.content_hash_hi = hhi;
+    CommitCanonicalObjectResponse cres;
+    try { cres = d->rpc->commit_canonical_object(cm); }
+    catch (const std::exception& e) {
+        out.ok = false; out.message = std::string("commit rpc: ") + e.what();
+        return out;
+    }
+    out.ok = cres.ok;
+    out.did_d2h = true;
+    out.message = cres.message;
+    // Destructive: drop local storage now that bytes are safely canonical.
+    // (Losers of a duplicate-candidate race also invalidate: their bytes are
+    // equivalent to the winner's; the local tensor is no longer needed.)
+    if (destructive && invalidate_cb) invalidate_cb(cookie);
+    return out;
+}
+
+SealModelVersionResponse OffloadAgent::seal_model_version(
+    const SealModelVersionRequest& r) { return impl_->rpc->seal_model_version(r); }
+GetLatestSealedVersionResponse OffloadAgent::get_latest_sealed_version(
+    const GetLatestSealedVersionRequest& r) {
+    return impl_->rpc->get_latest_sealed_version(r);
+}
+GetManifestResponse OffloadAgent::get_manifest(const GetManifestRequest& r) {
+    return impl_->rpc->get_manifest(r);
+}
+PullTensorResponse OffloadAgent::pull_tensor(const PullTensorRequest& r) {
+    return impl_->rpc->pull_tensor(r);
+}
 
 }  // namespace offload

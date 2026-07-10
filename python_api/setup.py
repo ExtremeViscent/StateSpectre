@@ -33,6 +33,7 @@ sources = [
     os.path.join(SRC, "agent", "agent.cpp"),
     os.path.join(SRC, "agent", "rpc_client.cpp"),
     os.path.join(SRC, "common", "wire.cpp"),
+    os.path.join(SRC, "common", "wire_v2.cpp"),
     os.path.join(SRC, "common", "uds.cpp"),
     os.path.join(SRC, "common", "metrics.cpp"),
     os.path.join(SRC, "common", "numa_util.cpp"),

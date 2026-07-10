@@ -265,12 +265,13 @@ RequestCanonicalEvictResponse OffloadDaemon::handle_request_canonical_evict(
         return true;
     };
 
-    auto fill_slot_resp = [&](uint32_t base) {
+    auto fill_slot_resp = [&](uint32_t base, uint64_t syn_tid) {
         resp.slot_id = base;
         resp.arena_id = slots_[base].arena_id;
         resp.arena_offset = slots_[base].arena_offset;
         resp.capacity = static_cast<uint64_t>(slots_for_bytes(req.key.nbytes)) *
                         cfg_.allocation_granularity_bytes;
+        resp.synthetic_tid = syn_tid;
     };
 
     // ======================= existing VALID/SEALED object ==================
@@ -312,7 +313,7 @@ RequestCanonicalEvictResponse OffloadDaemon::handle_request_canonical_evict(
         resp.action = ATTACH_ACTION_DUPLICATE_CANDIDATE;
         resp.object_id = existing->object_id;   // verify against this object
         resp.lease_id = lease_id;
-        fill_slot_resp(base);
+        fill_slot_resp(base, cand_tid);
         resp.message = "verify candidate (hash)";
         Metrics::instance().inc(Metric::kCanonicalDuplicateCandidate);
         return resp;
@@ -349,7 +350,7 @@ RequestCanonicalEvictResponse OffloadDaemon::handle_request_canonical_evict(
         resp.action = ATTACH_ACTION_DUPLICATE_CANDIDATE;
         resp.object_id = existing->object_id;
         resp.lease_id = lease_id;
-        fill_slot_resp(base);
+        fill_slot_resp(base, cand_tid);
         resp.message = "duplicate candidate";
         Metrics::instance().inc(Metric::kCanonicalDuplicateCandidate);
         return resp;
@@ -392,7 +393,7 @@ RequestCanonicalEvictResponse OffloadDaemon::handle_request_canonical_evict(
     resp.action = ATTACH_ACTION_NEED_D2H_CREATE;
     resp.object_id = object_id;
     resp.lease_id = lease_id;
-    fill_slot_resp(base);
+    fill_slot_resp(base, synthetic_tid);
     resp.message = "need d2h create";
     Metrics::instance().inc(Metric::kCanonicalObjectsCreated);
     return resp;
