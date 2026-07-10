@@ -149,11 +149,66 @@ static void test_tab_rejected() {
     CHECK(threw);
 }
 
+// v2 canonical/quota/export overlay keys parse into DaemonConfig, including IEC
+// byte suffixes and enum name -> numeric mapping.
+static void test_v2_config() {
+    std::string yaml =
+        "daemon:\n"
+        "  socket_path: /tmp/fastoffload.sock\n"
+        "arenas:\n"
+        "  allocation_granularity_mb: 16\n"
+        "  per_numa:\n"
+        "    - numa_node: 0\n"
+        "      size_gb: 8\n"
+        "      gpu_windows:\n"
+        "        - gpu: 0\n"
+        "          size_gb: 4\n"
+        "      overflow_gb: 2\n"
+        "manager:\n"
+        "  enable_canonical_store: true\n"
+        "  control_tcp_port: 19090\n"
+        "namespace:\n"
+        "  default_tenant_id: 7\n"
+        "  include_launch_epoch: true\n"
+        "canonical_store:\n"
+        "  dedup_default_mode: hash_verified\n"
+        "  creating_policy: duplicate_candidate_on_pressure\n"
+        "  duplicate_candidate_gpu_pressure_threshold: 0.75\n"
+        "manifest:\n"
+        "  retain_sealed_versions: 8\n"
+        "export:\n"
+        "  default_transport: libfabric_send\n"
+        "  fallback_transport: tcp\n"
+        "  max_concurrent_exports_per_job: 16\n"
+        "quotas:\n"
+        "  default:\n"
+        "    max_pinned_bytes: 256GiB\n"
+        "    max_nvme_bytes: 8TiB\n"
+        "    max_inflight_d2h_bytes: 160GiB\n";
+    auto path = write_temp(yaml);
+    DaemonConfig c = load_config(path);
+    CHECK(c.v2_enable_canonical_store);
+    CHECK_EQ(c.v2_control_tcp_port, 19090u);
+    CHECK_EQ(c.v2_default_tenant_id, 7ull);
+    CHECK_EQ(c.v2_dedup_default_mode, 2u);       // hash_verified
+    CHECK_EQ(c.v2_creating_policy, 1u);          // duplicate_candidate_on_pressure
+    CHECK_EQ(c.v2_retain_sealed_versions, 8u);
+    CHECK_EQ(c.v2_default_transport, 3u);        // libfabric_send
+    CHECK_EQ(c.v2_fallback_transport, 1u);       // tcp
+    CHECK_EQ(c.v2_max_concurrent_exports_per_job, 16u);
+    CHECK_EQ(c.v2_quota_max_pinned_bytes, (256ull << 30));
+    CHECK_EQ(c.v2_quota_max_nvme_bytes, (8ull << 40));
+    CHECK_EQ(c.v2_quota_max_inflight_d2h_bytes, (160ull << 30));
+    CHECK(c.v2_duplicate_candidate_gpu_pressure_threshold > 0.74 &&
+          c.v2_duplicate_candidate_gpu_pressure_threshold < 0.76);
+}
+
 int main() {
     RUN(test_full_config);
     RUN(test_defaults_applied);
     RUN(test_smoke_config);
     RUN(test_missing_file_throws);
     RUN(test_tab_rejected);
+    RUN(test_v2_config);
     return summary("config");
 }

@@ -272,6 +272,58 @@ DrainTarget parse_target(const std::string& s, int line) {
                              ": unknown target_tier '" + s + "'");
 }
 
+// Parse a byte-size scalar with an optional binary/decimal suffix, e.g.
+// "256GiB", "1TiB", "160GiB", "512MiB", or a plain integer (bytes). Used by the
+// v2 quota/export keys which are written with IEC suffixes.
+uint64_t to_bytes(const YamlNode& n, const std::string& ctx) {
+    if (n.kind != YamlNode::kScalar)
+        throw std::runtime_error("config error at line " + std::to_string(n.line) +
+                                 ": expected size for " + ctx);
+    const std::string& s = n.scalar;
+    size_t pos = 0;
+    double v = 0;
+    try { v = std::stod(s, &pos); }
+    catch (const std::exception&) {
+        throw std::runtime_error("config error at line " + std::to_string(n.line) +
+                                 ": invalid size '" + s + "' for " + ctx);
+    }
+    std::string suf = s.substr(pos);
+    // trim spaces
+    while (!suf.empty() && suf.front() == ' ') suf.erase(suf.begin());
+    while (!suf.empty() && suf.back() == ' ') suf.pop_back();
+    std::transform(suf.begin(), suf.end(), suf.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    uint64_t mult = 1;
+    if (suf.empty() || suf == "b") mult = 1;
+    else if (suf == "kib" || suf == "kb" || suf == "k") mult = 1ull << 10;
+    else if (suf == "mib" || suf == "mb" || suf == "m") mult = 1ull << 20;
+    else if (suf == "gib" || suf == "gb" || suf == "g") mult = 1ull << 30;
+    else if (suf == "tib" || suf == "tb" || suf == "t") mult = 1ull << 40;
+    else
+        throw std::runtime_error("config error at line " + std::to_string(n.line) +
+                                 ": unknown size suffix '" + suf + "' for " + ctx);
+    return static_cast<uint64_t>(v * static_cast<double>(mult));
+}
+
+// Map a dedup mode name to the DedupMode numeric (offload_canonical_abi.hpp).
+uint32_t parse_dedup_mode(const std::string& s) {
+    if (s == "disabled") return 0;
+    if (s == "semantic_trusted") return 1;
+    if (s == "hash_verified") return 2;
+    if (s == "sampled_hash") return 3;
+    return 1;  // default semantic_trusted
+}
+
+// Map a transport name to TransportKind numeric.
+uint32_t parse_transport(const std::string& s) {
+    if (s == "tcp") return 1;
+    if (s == "file") return 2;
+    if (s == "libfabric_send" || s == "libfabric") return 3;
+    if (s == "libfabric_rdma_read") return 4;
+    if (s == "libfabric_rdma_write") return 5;
+    return 1;
+}
+
 }  // namespace
 
 // ----------------------------------------------------------------------------
@@ -343,9 +395,12 @@ DaemonConfig load_config(const std::string& path) {
 
     DaemonConfig cfg;
 
-    // Known top-level sections.
+    // Known top-level sections (v1 + v2 canonical overlay).
     static const char* kTopKeys[] = {"daemon", "arenas", "drain_policy", "nvme",
-                                      "python_api"};
+                                      "python_api", "manager", "namespace",
+                                      "canonical_store", "manifest", "export",
+                                      "quotas", "roles", "libfabric", "cleanup",
+                                      "metrics"};
     for (const auto& kv : root.map) {
         bool known = false;
         for (const char* k : kTopKeys)
@@ -499,6 +554,127 @@ DaemonConfig load_config(const std::string& path) {
             else if (k == "allow_views") cfg.allow_views = to_bool(v, k);
             else if (k == "unsafe_autograd") cfg.unsafe_autograd = to_bool(v, k);
             else OFLD_WARN("config", "unknown python_api.%s (ignored)", k.c_str());
+        }
+    }
+
+    // ---- v2: manager: (feature toggles + optional TCP control port) ----
+    if (const YamlNode* mg = root.find("manager")) {
+        for (const auto& kv : mg->map) {
+            const std::string& k = kv.first;
+            const YamlNode& v = kv.second;
+            if (k == "enable_canonical_store")
+                cfg.v2_enable_canonical_store = to_bool(v, k);
+            else if (k == "enable_manifests")
+                cfg.v2_enable_manifests = to_bool(v, k);
+            else if (k == "enable_rollout_export")
+                cfg.v2_enable_rollout_export = to_bool(v, k);
+            else if (k == "control_tcp_port")
+                cfg.v2_control_tcp_port = static_cast<uint32_t>(to_u64(v, k));
+            else if (k == "daemon_socket") { /* alias of daemon.socket_path */
+                cfg.socket_path = to_str(v, k);
+            }
+            else OFLD_WARN("config", "unknown manager.%s (ignored)", k.c_str());
+        }
+    }
+
+    // ---- v2: namespace: ----
+    if (const YamlNode* ns = root.find("namespace")) {
+        for (const auto& kv : ns->map) {
+            const std::string& k = kv.first;
+            const YamlNode& v = kv.second;
+            if (k == "default_tenant_id")
+                cfg.v2_default_tenant_id = to_u64(v, k);
+            else if (k == "require_job_registration")
+                cfg.v2_require_job_registration = to_bool(v, k);
+            else if (k == "include_launch_epoch")
+                cfg.v2_include_launch_epoch = to_bool(v, k);
+            else if (k == "job_name_is_identity") { /* enforced false; informational */ }
+            else OFLD_WARN("config", "unknown namespace.%s (ignored)", k.c_str());
+        }
+    }
+
+    // ---- v2: canonical_store: ----
+    if (const YamlNode* cs = root.find("canonical_store")) {
+        for (const auto& kv : cs->map) {
+            const std::string& k = kv.first;
+            const YamlNode& v = kv.second;
+            if (k == "dedup_default_mode")
+                cfg.v2_dedup_default_mode = parse_dedup_mode(to_str(v, k));
+            else if (k == "cross_job_dedup")
+                cfg.v2_cross_job_dedup = to_bool(v, k);
+            else if (k == "creating_policy")
+                cfg.v2_creating_policy =
+                    (to_str(v, k) == "duplicate_candidate_on_pressure") ? 1u : 0u;
+            else if (k == "duplicate_candidate_gpu_pressure_threshold")
+                cfg.v2_duplicate_candidate_gpu_pressure_threshold = to_double(v, k);
+            else if (k == "sampled_hash_bytes_per_gib")
+                cfg.v2_sampled_hash_bytes_per_gib = to_u64(v, k);
+            else if (k == "object_table_capacity" || k == "manifest_table_capacity") {
+                /* informational: daemon tables grow dynamically */
+            }
+            else OFLD_WARN("config", "unknown canonical_store.%s (ignored)", k.c_str());
+        }
+    }
+
+    // ---- v2: manifest: ----
+    if (const YamlNode* mf = root.find("manifest")) {
+        for (const auto& kv : mf->map) {
+            const std::string& k = kv.first;
+            const YamlNode& v = kv.second;
+            if (k == "seal_requires_all_objects_valid")
+                cfg.v2_seal_requires_all_objects_valid = to_bool(v, k);
+            else if (k == "retain_sealed_versions")
+                cfg.v2_retain_sealed_versions = static_cast<uint32_t>(to_u64(v, k));
+            else if (k == "allow_sealed_version_mutation" ||
+                     k == "latest_pointer_update") { /* informational */ }
+            else OFLD_WARN("config", "unknown manifest.%s (ignored)", k.c_str());
+        }
+    }
+
+    // ---- v2: export: ----
+    if (const YamlNode* ex = root.find("export")) {
+        for (const auto& kv : ex->map) {
+            const std::string& k = kv.first;
+            const YamlNode& v = kv.second;
+            if (k == "default_transport")
+                cfg.v2_default_transport = parse_transport(to_str(v, k));
+            else if (k == "fallback_transport")
+                cfg.v2_fallback_transport = parse_transport(to_str(v, k));
+            else if (k == "use_dedicated_export_buffers")
+                cfg.v2_use_dedicated_export_buffers = to_bool(v, k);
+            else if (k == "require_export_refcount")
+                cfg.v2_require_export_refcount = to_bool(v, k);
+            else if (k == "max_concurrent_exports_per_job")
+                cfg.v2_max_concurrent_exports_per_job =
+                    static_cast<uint32_t>(to_u64(v, k));
+            else if (k == "export_buffer_pool_bytes" ||
+                     k == "allow_direct_rdma_read_from_object_slot") {
+                /* informational for the debug-transport implementation */
+            }
+            else OFLD_WARN("config", "unknown export.%s (ignored)", k.c_str());
+        }
+    }
+
+    // ---- v2: quotas.default: (per-job default quotas) ----
+    if (const YamlNode* q = root.find("quotas")) {
+        if (const YamlNode* def = q->find("default")) {
+            for (const auto& kv : def->map) {
+                const std::string& k = kv.first;
+                const YamlNode& v = kv.second;
+                if (k == "max_pinned_bytes")
+                    cfg.v2_quota_max_pinned_bytes = to_bytes(v, k);
+                else if (k == "max_pageable_bytes")
+                    cfg.v2_quota_max_pageable_bytes = to_bytes(v, k);
+                else if (k == "max_nvme_bytes")
+                    cfg.v2_quota_max_nvme_bytes = to_bytes(v, k);
+                else if (k == "max_inflight_d2h_bytes")
+                    cfg.v2_quota_max_inflight_d2h_bytes = to_bytes(v, k);
+                else if (k == "max_inflight_export_bytes")
+                    cfg.v2_quota_max_inflight_export_bytes = to_bytes(v, k);
+                else if (k == "priority") { /* informational */ }
+                else OFLD_WARN("config", "unknown quotas.default.%s (ignored)",
+                               k.c_str());
+            }
         }
     }
 

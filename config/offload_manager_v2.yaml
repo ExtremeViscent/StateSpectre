@@ -1,0 +1,77 @@
+manager:
+  daemon_socket: unix:///tmp/fastoffload.sock
+  enable_canonical_store: true
+  enable_manifests: true
+  enable_rollout_export: true
+
+namespace:
+  default_tenant_id: 0
+  require_job_registration: true
+  job_name_is_identity: false
+  include_launch_epoch: true
+
+canonical_store:
+  object_table_capacity: 1048576
+  manifest_table_capacity: 4096
+  dedup_default_mode: semantic_trusted   # disabled | semantic_trusted | hash_verified | sampled_hash
+  cross_job_dedup: false
+  creating_policy: wait                  # wait | duplicate_candidate_on_pressure
+  duplicate_candidate_gpu_pressure_threshold: 0.90
+  sampled_hash_bytes_per_gib: 1048576
+
+roles:
+  rollout_visible_roles:
+    - POLICY_ROLLOUT
+  mutable_roles:
+    - POLICY_TRAINABLE
+  immutable_roles:
+    - POLICY_REFERENCE
+    - REWARD_MODEL
+    - VALUE_MODEL
+
+quotas:
+  default:
+    max_pinned_bytes: 256GiB
+    max_pageable_bytes: 1TiB
+    max_nvme_bytes: 8TiB
+    max_inflight_d2h_bytes: 160GiB
+    max_inflight_export_bytes: 160GiB
+    priority: normal
+  per_job_overrides: {}
+
+manifest:
+  seal_requires_all_objects_valid: true
+  allow_sealed_version_mutation: false
+  retain_sealed_versions: 4
+  latest_pointer_update: atomic
+
+export:
+  default_transport: libfabric_send
+  fallback_transport: tcp
+  use_dedicated_export_buffers: true
+  export_buffer_pool_bytes: 128GiB
+  allow_direct_rdma_read_from_object_slot: false
+  require_export_refcount: true
+  max_concurrent_exports_per_job: 8
+
+libfabric:
+  provider: auto
+  endpoint_mode: request_triggered_send
+  rdma_read_enabled: false
+  rdma_write_enabled: false
+  register_export_buffers: true
+  register_offload_slots_for_remote: false
+
+cleanup:
+  on_job_terminate: release_unsealed
+  retain_sealed_manifests_on_success: true
+  retain_sealed_manifests_seconds: 3600
+  abort_inflight_exports_on_terminate: false
+
+metrics:
+  labels:
+    - tenant_id
+    - job_id
+    - job_name
+    - launch_epoch
+    - model_role
