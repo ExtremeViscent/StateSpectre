@@ -20,6 +20,13 @@ const char* op_name(OpCode op) {
         case OpCode::kBatchComplete:    return "BatchComplete";
         case OpCode::kShutdown:         return "Shutdown";
         case OpCode::kGetStats:         return "GetStats";
+        case OpCode::kRegisterJob:            return "RegisterJob";
+        case OpCode::kRequestCanonicalEvict:  return "RequestCanonicalEvict";
+        case OpCode::kCommitCanonicalObject:  return "CommitCanonicalObject";
+        case OpCode::kSealModelVersion:       return "SealModelVersion";
+        case OpCode::kGetLatestSealedVersion: return "GetLatestSealedVersion";
+        case OpCode::kGetManifest:            return "GetManifest";
+        case OpCode::kPullTensor:             return "PullTensor";
     }
     return "Unknown";
 }

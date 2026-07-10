@@ -44,6 +44,7 @@ set(AGENT_DIR    ${CMAKE_SOURCE_DIR}/src/agent)
 # ------------------------- common -------------------------
 add_library(ofld_common STATIC
   ${COMMON_DIR}/wire.cpp
+  ${COMMON_DIR}/wire_v2.cpp
   ${COMMON_DIR}/uds.cpp
   ${COMMON_DIR}/metrics.cpp
   ${COMMON_DIR}/numa_util.cpp)
@@ -81,6 +82,10 @@ enable_testing()
 add_executable(test_wire      tests/cpp/test_wire.cpp)
 target_link_libraries(test_wire PRIVATE ofld_common)
 
+add_executable(test_wire_v2   tests/cpp/test_wire_v2.cpp)
+target_link_libraries(test_wire_v2 PRIVATE ofld_common)
+target_include_directories(test_wire_v2 PRIVATE ${ABI_DIR} ${COMMON_DIR})
+
 add_executable(test_config    tests/cpp/test_config.cpp)
 target_link_libraries(test_config PRIVATE ofld_daemon)
 
@@ -106,6 +111,7 @@ add_executable(offload_bench tests/cpp/bench.cpp)
 target_link_libraries(offload_bench PRIVATE ofld_agent ofld_daemon)
 
 add_test(NAME wire        COMMAND test_wire)
+add_test(NAME wire_v2     COMMAND test_wire_v2)
 add_test(NAME config      COMMAND test_config)
 add_test(NAME layout      COMMAND test_layout)
 add_test(NAME daemon_rpc  COMMAND test_daemon_rpc)

@@ -1,0 +1,251 @@
+syntax = "proto3";
+
+package offload.v2;
+
+// Canonical/offload v2 RPC extension. This file is additive over the v1
+// lease/slot/offload RPCs.
+
+enum ModelRole {
+  MODEL_ROLE_UNKNOWN = 0;
+  MODEL_ROLE_POLICY_TRAINABLE = 1;
+  MODEL_ROLE_POLICY_ROLLOUT = 2;
+  MODEL_ROLE_POLICY_REFERENCE = 3;
+  MODEL_ROLE_REWARD_MODEL = 4;
+  MODEL_ROLE_VALUE_MODEL = 5;
+  MODEL_ROLE_AUXILIARY = 6;
+}
+
+enum DedupMode {
+  DEDUP_DISABLED = 0;
+  DEDUP_SEMANTIC_TRUSTED = 1;
+  DEDUP_HASH_VERIFIED = 2;
+  DEDUP_SAMPLED_HASH = 3;
+}
+
+enum AttachCreateAction {
+  ATTACHED_EXISTING = 0;
+  NEED_D2H_CREATE = 1;
+  WAIT_FOR_CREATOR = 2;
+  DUPLICATE_CANDIDATE = 3;
+  REJECTED_STALE_VERSION = 4;
+  QUOTA_EXCEEDED = 5;
+  ATTACH_ERROR = 255;
+}
+
+enum ManifestState {
+  MANIFEST_OPEN = 0;
+  MANIFEST_SEALING = 1;
+  MANIFEST_SEALED = 2;
+  MANIFEST_REVOKED = 3;
+  MANIFEST_ERROR = 255;
+}
+
+enum TransportKind {
+  TRANSPORT_UNKNOWN = 0;
+  TRANSPORT_TCP = 1;
+  TRANSPORT_FILE = 2;
+  TRANSPORT_LIBFABRIC_SEND = 3;
+  TRANSPORT_LIBFABRIC_RDMA_READ = 4;
+  TRANSPORT_LIBFABRIC_RDMA_WRITE = 5;
+}
+
+message JobKey {
+  uint64 tenant_id = 1;
+  uint64 job_id = 2;
+  uint64 launch_epoch = 3;
+  string job_name = 4;
+}
+
+message RegisterJobRequest {
+  uint64 tenant_id = 1;
+  string job_name = 2;
+  uint64 scheduler_job_id = 3;
+  map<string, string> labels = 4;
+}
+
+message RegisterJobResponse {
+  JobKey job = 1;
+  uint64 control_generation = 2;
+}
+
+message CanonicalTensorKey {
+  JobKey job = 1;
+
+  ModelRole model_role = 2;
+  uint64 model_version = 3;
+
+  uint64 param_id = 4;
+  uint64 param_fqn_hash = 5;
+  string param_fqn_debug = 6;
+
+  uint32 dtype = 7;
+  uint32 layout = 8;
+  uint64 nbytes = 9;
+  uint64 shape_hash = 10;
+  uint64 stride_hash = 11;
+
+  uint32 pp_rank = 20;
+  uint32 tp_rank = 21;
+  uint32 ep_rank = 22;
+  uint32 etp_rank = 23;
+  int32 expert_id = 24;
+
+  uint64 shard_offset = 30;
+  uint64 shard_nbytes = 31;
+}
+
+message RequestCanonicalEvictRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+
+  CanonicalTensorKey key = 3;
+
+  uint64 local_tensor_id = 4;
+  uint64 local_version = 5;
+
+  bool destructive = 6;
+  bool attach_if_exists = 7;
+  bool create_if_missing = 8;
+  DedupMode dedup_mode = 9;
+
+  // If true and another rank is CREATING this object, daemon may assign a
+  // temporary candidate slot to this rank instead of making it wait.
+  bool allow_duplicate_candidate = 10;
+
+  uint32 alignment = 11;
+  uint32 priority = 12;
+}
+
+message RequestCanonicalEvictResponse {
+  AttachCreateAction action = 1;
+
+  uint64 object_id = 2;
+  uint64 lease_id = 3;
+  uint32 slot_id = 4;
+  uint64 arena_id = 5;
+  uint64 arena_offset = 6;
+  uint64 capacity = 7;
+
+  string message = 100;
+}
+
+message CommitCanonicalObjectRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+  uint64 object_id = 3;
+  uint64 lease_id = 4;
+  CanonicalTensorKey key = 5;
+
+  uint64 content_hash_lo = 10;
+  uint64 content_hash_hi = 11;
+}
+
+message CommitCanonicalObjectResponse {
+  bool ok = 1;
+  uint64 object_id = 2;
+  string message = 100;
+}
+
+message SealModelVersionRequest {
+  JobKey job = 1;
+  ModelRole model_role = 2;
+  uint64 model_version = 3;
+  bool fail_if_missing = 4;
+}
+
+message SealModelVersionResponse {
+  bool ok = 1;
+  ManifestState state = 2;
+  uint64 tensor_count = 3;
+  uint64 total_nbytes = 4;
+  string message = 100;
+}
+
+message GetLatestSealedVersionRequest {
+  JobKey job = 1;
+  ModelRole model_role = 2;
+}
+
+message GetLatestSealedVersionResponse {
+  bool found = 1;
+  uint64 model_version = 2;
+  string message = 100;
+}
+
+message ManifestFilter {
+  // Optional rollout-side filters. Leave unset to return all entries.
+  optional uint32 pp_rank = 1;
+  optional uint32 tp_rank = 2;
+  optional uint32 ep_rank = 3;
+  optional uint32 etp_rank = 4;
+  optional int32 expert_id = 5;
+}
+
+message GetManifestRequest {
+  JobKey job = 1;
+  ModelRole model_role = 2;
+  uint64 model_version = 3;
+  ManifestFilter filter = 4;
+}
+
+message TensorManifestEntry {
+  CanonicalTensorKey key = 1;
+  uint64 object_id = 2;
+  uint64 content_hash_lo = 3;
+  uint64 content_hash_hi = 4;
+  string location_hint = 5;
+}
+
+message GetManifestResponse {
+  JobKey job = 1;
+  ModelRole model_role = 2;
+  uint64 model_version = 3;
+  ManifestState state = 4;
+  repeated TensorManifestEntry tensors = 5;
+}
+
+message PullTensorRequest {
+  JobKey job = 1;
+  ModelRole model_role = 2;
+  uint64 model_version = 3;
+  uint64 object_id = 4;
+
+  TransportKind transport = 5;
+
+  // Opaque transport-specific target info, e.g. libfabric endpoint, memory key,
+  // remote address, or TCP receiver token.
+  bytes target_descriptor = 6;
+}
+
+message PullTensorResponse {
+  bool ok = 1;
+  uint64 object_id = 2;
+  uint64 nbytes = 3;
+  TransportKind transport = 4;
+
+  // Opaque transport-specific metadata, e.g. transfer id, rkey, local staging id.
+  bytes transport_metadata = 5;
+  string message = 100;
+}
+
+service CanonicalOffloadService {
+  rpc RegisterJob(RegisterJobRequest) returns (RegisterJobResponse);
+
+  rpc RequestCanonicalEvict(RequestCanonicalEvictRequest)
+      returns (RequestCanonicalEvictResponse);
+
+  rpc CommitCanonicalObject(CommitCanonicalObjectRequest)
+      returns (CommitCanonicalObjectResponse);
+
+  rpc SealModelVersion(SealModelVersionRequest)
+      returns (SealModelVersionResponse);
+
+  rpc GetLatestSealedVersion(GetLatestSealedVersionRequest)
+      returns (GetLatestSealedVersionResponse);
+
+  rpc GetManifest(GetManifestRequest)
+      returns (GetManifestResponse);
+
+  rpc PullTensor(PullTensorRequest)
+      returns (PullTensorResponse);
+}

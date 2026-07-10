@@ -41,6 +41,17 @@ enum class OpCode : uint16_t {
     kBatchComplete    = 11,
     kShutdown         = 12,   // administrative: ask daemon to exit cleanly
     kGetStats         = 13,   // administrative: fetch daemon-wide metrics snapshot
+
+    // ---- v2 canonical model-state extension. Additive: the v1 handlers above
+    // are unchanged. Message bodies + codecs live in protocol_v2.h / wire_v2.*.
+    // See rpc/offload_canonical.proto and docs/UPDATE_V2.md. ----
+    kRegisterJob            = 20,
+    kRequestCanonicalEvict  = 21,
+    kCommitCanonicalObject  = 22,
+    kSealModelVersion       = 23,
+    kGetLatestSealedVersion = 24,
+    kGetManifest            = 25,
+    kPullTensor             = 26,
 };
 
 const char* op_name(OpCode op);
