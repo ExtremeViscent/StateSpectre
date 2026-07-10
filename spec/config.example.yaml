@@ -1,0 +1,54 @@
+daemon:
+  socket_path: /tmp/fastoffload.sock
+  control_shm_name: /fastoffload_ctrl
+  heartbeat_timeout_ms: 5000
+
+arenas:
+  registration_policy: lazy_chunked
+  registration_chunk_mb: 512
+  allocation_granularity_mb: 16
+  per_numa:
+    - numa_node: 0
+      size_gb: 384
+      gpu_windows:
+        - gpu: 0
+          size_gb: 80
+        - gpu: 1
+          size_gb: 80
+        - gpu: 2
+          size_gb: 80
+        - gpu: 3
+          size_gb: 80
+      overflow_gb: 64
+    - numa_node: 1
+      size_gb: 384
+      gpu_windows:
+        - gpu: 4
+          size_gb: 80
+        - gpu: 5
+          size_gb: 80
+        - gpu: 6
+          size_gb: 80
+        - gpu: 7
+          size_gb: 80
+      overflow_gb: 64
+
+drain_policy:
+  target_tier: pageable_then_nvme
+  drain_on_d2h_complete: true
+  normal_threshold: 0.60
+  priority_threshold: 0.80
+  aggressive_threshold: 0.95
+
+nvme:
+  enabled: true
+  path: /nvme/fastoffload
+  io_engine: io_uring
+  direct_io: true
+  stripe: true
+
+python_api:
+  default_invalidate: set_empty
+  require_own_storage: true
+  allow_views: false
+  unsafe_autograd: false

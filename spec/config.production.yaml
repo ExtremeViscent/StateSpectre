@@ -1,0 +1,76 @@
+# Production daemon config exercising all tunables added in the M7 hardening
+# pass. Superset of spec/config.example.yaml. Values shown are the defaults the
+# daemon applies when a key is omitted; override as needed for your hardware.
+#
+# Measured guidance on this box (8x H20, PCIe Gen5, 2x Samsung MZQL2 NVMe):
+#   - D2H/H2D ~48-54 GB/s (near PCIe Gen5 x16 line rate)
+#   - O_DIRECT beats buffered for large sequential writes; block_mb=16 is a good
+#     default (1 MB -> 16 MB gave ~+20-25% on raw dd; io_uring O_DIRECT was the
+#     fastest drain engine in-system).
+
+daemon:
+  socket_path: /tmp/fastoffload.sock
+  control_shm_name: /fastoffload_ctrl
+  heartbeat_timeout_ms: 5000
+  # Shared-memory completion rings (removes the RPC syscall from the completion
+  # hot path). One ring per rank; capacity is entries (power of two).
+  completion_ring_max_ranks: 64
+  completion_ring_capacity: 1024
+  ring_poll_us: 50            # daemon ring-poller sleep between empty sweeps
+
+arenas:
+  registration_policy: lazy_chunked
+  registration_chunk_mb: 512  # informational; the agent registers whole arenas
+  allocation_granularity_mb: 16
+  per_numa:
+    - numa_node: 0
+      size_gb: 384
+      gpu_windows:
+        - gpu: 0
+          size_gb: 80
+        - gpu: 1
+          size_gb: 80
+        - gpu: 2
+          size_gb: 80
+        - gpu: 3
+          size_gb: 80
+      overflow_gb: 64
+    - numa_node: 1
+      size_gb: 384
+      gpu_windows:
+        - gpu: 4
+          size_gb: 80
+        - gpu: 5
+          size_gb: 80
+        - gpu: 6
+          size_gb: 80
+        - gpu: 7
+          size_gb: 80
+      overflow_gb: 64
+
+drain_policy:
+  target_tier: pageable_then_nvme
+  drain_on_d2h_complete: true
+  normal_threshold: 0.60
+  priority_threshold: 0.80
+  aggressive_threshold: 0.95
+
+nvme:
+  enabled: true
+  path: /nvme/fastoffload         # base dir (used when stripe_dirs is empty)
+  io_engine: io_uring             # io_uring | pwrite
+  direct_io: true                 # O_DIRECT (recommended for large sequential)
+  stripe: true
+  stripe_count: 8                 # number of stripe files per tensor
+  block_mb: 16                    # IO block size (bigger = better O_DIRECT BW)
+  queue_depth: 16                 # io_uring in-flight blocks per drain
+  # Point one directory per physical NVMe so stripes land on different drives:
+  stripe_dirs:
+    - /nvme0/fastoffload
+    - /nvme1/fastoffload
+
+python_api:
+  default_invalidate: set_empty
+  require_own_storage: true
+  allow_views: false
+  unsafe_autograd: false

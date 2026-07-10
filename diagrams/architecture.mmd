@@ -1,0 +1,50 @@
+flowchart TB
+    subgraph Rank[Rank Process / PyTorch]
+      PyTensor[PyTorch CUDA Tensor]
+      Agent[Rank-side Agent C++/Python]
+      EventThread[CUDA Event Progress Thread]
+      MmapRank[mmap data arena + cudaHostRegister]
+      PyAPI[Python offload_context / evict / restore]
+    end
+
+    subgraph Daemon[Node Offload Daemon]
+      RPC[UDS RPC Server]
+      Lease[Lease + Slot Allocator]
+      Loc[Tensor Version Location Table]
+      Drain[Drain Workers]
+      Prefetch[Prefetch Workers]
+      Metrics[Metrics/Tracing]
+    end
+
+    subgraph Shm[Shared Memory]
+      Ctrl[Control Slot Table]
+      Arena0[NUMA0 Pinned Data Arena]
+      Arena1[NUMA1 Pinned Data Arena]
+    end
+
+    subgraph Cold[Cold Storage]
+      Pageable[Pageable DRAM Cache]
+      NVMe[NVMe Spill]
+    end
+
+    PyAPI --> Agent
+    PyTensor --> Agent
+    Agent -->|RequestOffload / Complete| RPC
+    RPC --> Lease
+    Lease --> Loc
+    Lease --> Ctrl
+    Agent --> MmapRank
+    MmapRank --> Arena0
+    MmapRank --> Arena1
+    Agent -->|cudaMemcpyAsync D2H/H2D| Arena0
+    Agent -->|cudaMemcpyAsync D2H/H2D| Arena1
+    EventThread -->|MarkD2HComplete / MarkH2DComplete| RPC
+    Drain --> Arena0
+    Drain --> Arena1
+    Drain --> Pageable
+    Drain --> NVMe
+    Prefetch --> Pageable
+    Prefetch --> NVMe
+    Prefetch --> Arena0
+    Prefetch --> Arena1
+    Metrics --> RPC

@@ -1,0 +1,26 @@
+stateDiagram-v2
+    [*] --> FREE
+
+    FREE --> RESERVED_D2H: RequestOffload lease granted
+    RESERVED_D2H --> D2H_IN_FLIGHT: rank launches cudaMemcpyAsync D2H
+    D2H_IN_FLIGHT --> PINNED_VALID: rank CUDA event complete
+
+    PINNED_VALID --> DRAIN_IN_FLIGHT: daemon background drain
+    DRAIN_IN_FLIGHT --> COLD_VALID_PAGEABLE: drain to pageable DRAM complete
+    DRAIN_IN_FLIGHT --> COLD_VALID_NVME: drain to NVMe complete
+    COLD_VALID_PAGEABLE --> FREE: pinned slot released
+    COLD_VALID_NVME --> FREE: pinned slot released
+
+    COLD_VALID_PAGEABLE --> READBACK_IN_FLIGHT: prefetch request
+    COLD_VALID_NVME --> READBACK_IN_FLIGHT: prefetch request
+    READBACK_IN_FLIGHT --> PINNED_VALID: cold -> pinned complete
+
+    PINNED_VALID --> H2D_IN_FLIGHT: rank launches cudaMemcpyAsync H2D
+    H2D_IN_FLIGHT --> GPU_VALID: rank CUDA event complete
+    GPU_VALID --> FREE: release pinned slot if cold copy retained
+
+    RESERVED_D2H --> ERROR: timeout/rank failure
+    D2H_IN_FLIGHT --> ERROR: timeout/rank failure
+    DRAIN_IN_FLIGHT --> ERROR: IO failure
+    READBACK_IN_FLIGHT --> ERROR: IO failure
+    H2D_IN_FLIGHT --> ERROR: timeout/rank failure

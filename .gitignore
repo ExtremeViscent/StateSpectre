@@ -1,0 +1,14 @@
+# Build output
+/build/
+python_api/build/
+*.o
+*.a
+*.so
+__pycache__/
+*.pyc
+# Editor / OS
+*.swp
+.DS_Store
+# Local test sockets / traces
+*.sock
+/tmp/

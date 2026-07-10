@@ -1,0 +1,237 @@
+syntax = "proto3";
+
+package offload.v1;
+
+// Control-plane schema for centralized offload daemon.
+// Recommended transport for v1: Unix domain socket + protobuf.
+// FDs for control/data arenas are passed out-of-band by SCM_RIGHTS.
+
+message ArenaFd {
+  uint64 arena_id = 1;
+  uint32 numa_node = 2;
+  uint32 kind = 3;
+  uint64 size = 4;
+  uint64 base_offset = 5;
+  uint32 preferred_gpu = 6;
+  uint64 flags = 7;
+  // The actual fd is transported out-of-band.
+  uint32 fd_index = 8;
+}
+
+message RegisterRankRequest {
+  uint32 rank_id = 1;
+  uint32 local_rank = 2;
+  uint32 world_rank = 3;
+  uint32 gpu_id = 4;
+  uint32 numa_node = 5;
+  uint64 pid = 6;
+  uint64 capabilities = 7;
+}
+
+message RegisterRankResponse {
+  uint64 rank_epoch = 1;
+  uint64 control_generation = 2;
+  repeated ArenaFd arenas = 3;
+  uint64 control_fd_index = 4;
+}
+
+message HeartbeatRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+  uint64 timestamp_ns = 3;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message RequestOffloadRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+
+  uint64 tensor_id = 3;
+  uint64 version = 4;
+  uint64 nbytes = 5;
+
+  uint32 gpu_id = 6;
+  uint32 numa_node = 7;
+  uint32 alignment = 8;
+  uint32 priority = 9;
+  uint64 flags = 10;
+
+  string debug_name = 11;
+}
+
+message RequestOffloadResponse {
+  bool ok = 1;
+  string message = 2;
+
+  uint64 lease_id = 3;
+  uint32 slot_id = 4;
+  uint64 arena_id = 5;
+  uint64 arena_offset = 6;
+  uint64 capacity = 7;
+  uint32 state = 8;
+}
+
+message MarkD2HSubmittedRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+  uint64 lease_id = 3;
+  uint64 tensor_id = 4;
+  uint64 version = 5;
+  uint32 slot_id = 6;
+  uint64 submit_seq = 7;
+  uint64 timestamp_ns = 8;
+}
+
+message MarkD2HSubmittedResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message MarkD2HCompleteRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+  uint64 lease_id = 3;
+  uint64 tensor_id = 4;
+  uint64 version = 5;
+  uint32 slot_id = 6;
+  uint64 complete_seq = 7;
+  uint64 timestamp_ns = 8;
+}
+
+message MarkD2HCompleteResponse {
+  bool ok = 1;
+  string message = 2;
+  bool latest_version = 3;
+  bool drain_enqueued = 4;
+}
+
+message RequestPrefetchRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+
+  uint64 tensor_id = 3;
+  uint64 version = 4;
+  uint64 nbytes = 5;
+
+  uint32 gpu_id = 6;
+  uint32 numa_node = 7;
+  uint32 priority = 8;
+  uint64 flags = 9;
+}
+
+message RequestPrefetchResponse {
+  bool ok = 1;
+  string message = 2;
+
+  uint64 lease_id = 3;
+  uint32 slot_id = 4;
+  uint64 arena_id = 5;
+  uint64 arena_offset = 6;
+  uint64 nbytes = 7;
+  uint32 state = 8;
+  bool ready = 9;
+}
+
+message MarkH2DSubmittedRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+  uint64 lease_id = 3;
+  uint64 tensor_id = 4;
+  uint64 version = 5;
+  uint32 slot_id = 6;
+  uint64 submit_seq = 7;
+  uint64 timestamp_ns = 8;
+}
+
+message MarkH2DSubmittedResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message MarkH2DCompleteRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+  uint64 lease_id = 3;
+  uint64 tensor_id = 4;
+  uint64 version = 5;
+  uint32 slot_id = 6;
+  bool keep_pinned = 7;
+  uint64 complete_seq = 8;
+  uint64 timestamp_ns = 9;
+}
+
+message MarkH2DCompleteResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message ReleaseLeaseRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+  uint64 lease_id = 3;
+  uint32 slot_id = 4;
+  string reason = 5;
+}
+
+message ReleaseLeaseResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message LocationQueryRequest {
+  uint64 tensor_id = 1;
+  uint64 version = 2;
+}
+
+message LocationQueryResponse {
+  bool ok = 1;
+  string message = 2;
+  uint32 location_kind = 3;
+  uint32 slot_id = 4;
+  uint64 nbytes = 5;
+  uint64 version = 6;
+}
+
+message BatchCompletion {
+  uint32 event_type = 1; // D2H_COMPLETE, H2D_COMPLETE, etc.
+  uint64 lease_id = 2;
+  uint64 tensor_id = 3;
+  uint64 version = 4;
+  uint32 slot_id = 5;
+  uint64 seq = 6;
+  uint64 timestamp_ns = 7;
+}
+
+message BatchCompleteRequest {
+  uint32 rank_id = 1;
+  uint64 rank_epoch = 2;
+  repeated BatchCompletion completions = 3;
+}
+
+message BatchCompleteResponse {
+  bool ok = 1;
+  string message = 2;
+  uint32 accepted = 3;
+  uint32 rejected = 4;
+}
+
+service OffloadDaemon {
+  rpc RegisterRank(RegisterRankRequest) returns (RegisterRankResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  rpc RequestOffload(RequestOffloadRequest) returns (RequestOffloadResponse);
+  rpc MarkD2HSubmitted(MarkD2HSubmittedRequest) returns (MarkD2HSubmittedResponse);
+  rpc MarkD2HComplete(MarkD2HCompleteRequest) returns (MarkD2HCompleteResponse);
+
+  rpc RequestPrefetch(RequestPrefetchRequest) returns (RequestPrefetchResponse);
+  rpc MarkH2DSubmitted(MarkH2DSubmittedRequest) returns (MarkH2DSubmittedResponse);
+  rpc MarkH2DComplete(MarkH2DCompleteRequest) returns (MarkH2DCompleteResponse);
+
+  rpc ReleaseLease(ReleaseLeaseRequest) returns (ReleaseLeaseResponse);
+  rpc QueryLocation(LocationQueryRequest) returns (LocationQueryResponse);
+  rpc BatchComplete(BatchCompleteRequest) returns (BatchCompleteResponse);
+}
