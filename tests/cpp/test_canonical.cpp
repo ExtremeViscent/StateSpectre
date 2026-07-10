@@ -421,6 +421,114 @@ static void test_pull_over_tcp(DaemonFixture& fx) {
     CHECK_EQ(got_object, e.object_id);
 }
 
+// --------------------------------------------------------------------------
+// §2 Hash-verified dedup: a corrupt replica (different content hash) is
+// rejected on commit; a matching replica attaches.
+// --------------------------------------------------------------------------
+static void test_hash_verified_mismatch(DaemonFixture& fx) {
+    std::vector<int> f0, f1;
+    RawClient c0(fx.sock_path); auto r0 = c0.register_rank(0, &f0);
+    for (int fd : f0) close_fd(fd);
+    RawClient c1(fx.sock_path); auto r1 = c1.register_rank(1, &f1);
+    for (int fd : f1) close_fd(fd);
+    auto j = c0.register_job("hashv_job", 61).job;
+    const uint64_t NB = 1u << 20;
+    auto key = mk_key(j, 1, 300, 0, -1, NB);
+
+    // rank0 creates with content hash (0xAA, 0xBB).
+    auto ev0 = c0.can_evict(mk_evict(0, r0.rank_epoch, key, DEDUP_HASH_VERIFIED));
+    CHECK_EQ(ev0.action, (uint32_t)ATTACH_ACTION_NEED_D2H_CREATE);
+    do_create(c0, 0, r0.rank_epoch, ev0, 0xAA, 0xBB);
+
+    // rank1 (hash-verified) gets a verify candidate slot, D2H, then commits.
+    auto ev1 = c1.can_evict(mk_evict(1, r1.rank_epoch, key, DEDUP_HASH_VERIFIED));
+    CHECK_EQ(ev1.action, (uint32_t)ATTACH_ACTION_DUPLICATE_CANDIDATE);
+    CHECK_EQ(ev1.object_id, ev0.object_id);
+    uint64_t cand_tid = ev1.synthetic_tid;
+    CHECK(c1.d2h_sub(1, r1.rank_epoch, ev1.lease_id, cand_tid, 1, ev1.slot_id).ok);
+    CHECK(c1.d2h_done(1, r1.rank_epoch, ev1.lease_id, cand_tid, 1, ev1.slot_id).ok);
+    // Commit with a MISMATCHING hash -> rejected.
+    auto bad = c1.commit(1, r1.rank_epoch, ev1.object_id, ev1.lease_id,
+                         ev1.slot_id, 0xDE, 0xAD);
+    CHECK(!bad.ok);
+    CHECK(!bad.won);
+
+    // A second verify candidate committing the MATCHING hash attaches.
+    auto ev2 = c1.can_evict(mk_evict(1, r1.rank_epoch, key, DEDUP_HASH_VERIFIED));
+    CHECK_EQ(ev2.action, (uint32_t)ATTACH_ACTION_DUPLICATE_CANDIDATE);
+    uint64_t cand2 = ev2.synthetic_tid;
+    CHECK(c1.d2h_sub(1, r1.rank_epoch, ev2.lease_id, cand2, 1, ev2.slot_id).ok);
+    CHECK(c1.d2h_done(1, r1.rank_epoch, ev2.lease_id, cand2, 1, ev2.slot_id).ok);
+    auto good = c1.commit(1, r1.rank_epoch, ev2.object_id, ev2.lease_id,
+                          ev2.slot_id, 0xAA, 0xBB);
+    CHECK(good.ok);
+    CHECK(!good.won);   // attached to the winner, did not become the object
+}
+
+// --------------------------------------------------------------------------
+// §3 Duplicate candidate under pressure: with allow_duplicate_candidate, a
+// second rank racing a CREATING object gets its own candidate slot; the first
+// commit wins, the loser attaches (won=false) and its candidate is reclaimed.
+// --------------------------------------------------------------------------
+static void test_duplicate_candidate(DaemonFixture& fx) {
+    std::vector<int> f0, f1;
+    RawClient c0(fx.sock_path); auto r0 = c0.register_rank(0, &f0);
+    for (int fd : f0) close_fd(fd);
+    RawClient c1(fx.sock_path); auto r1 = c1.register_rank(1, &f1);
+    for (int fd : f1) close_fd(fd);
+    auto j = c0.register_job("dupcand_job", 62).job;
+    const uint64_t NB = 1u << 20;
+    auto key = mk_key(j, 1, 400, 0, -1, NB);
+
+    // rank0 creates but does NOT commit yet (object is CREATING).
+    auto ev0 = c0.can_evict(mk_evict(0, r0.rank_epoch, key, DEDUP_SEMANTIC_TRUSTED));
+    CHECK_EQ(ev0.action, (uint32_t)ATTACH_ACTION_NEED_D2H_CREATE);
+
+    // rank1 with allow_duplicate_candidate -> its own candidate slot.
+    auto ev1 = c1.can_evict(mk_evict(1, r1.rank_epoch, key, DEDUP_SEMANTIC_TRUSTED,
+                                     /*allow_dup=*/true));
+    CHECK_EQ(ev1.action, (uint32_t)ATTACH_ACTION_DUPLICATE_CANDIDATE);
+    CHECK(ev1.synthetic_tid != ev0.synthetic_tid);   // distinct backing slots
+
+    // rank0 wins: finish D2H + commit the real object.
+    do_create(c0, 0, r0.rank_epoch, ev0);
+
+    // rank1 finishes its candidate D2H then commits -> attaches (loser).
+    CHECK(c1.d2h_sub(1, r1.rank_epoch, ev1.lease_id, ev1.synthetic_tid, 1, ev1.slot_id).ok);
+    CHECK(c1.d2h_done(1, r1.rank_epoch, ev1.lease_id, ev1.synthetic_tid, 1, ev1.slot_id).ok);
+    auto loser = c1.commit(1, r1.rank_epoch, ev1.object_id, ev1.lease_id, ev1.slot_id);
+    CHECK(loser.ok);
+    CHECK(!loser.won);
+}
+
+// --------------------------------------------------------------------------
+// §4 Seal fails when expected_param_ids are not all present + fail_if_missing.
+// --------------------------------------------------------------------------
+static void test_seal_fail_on_missing(DaemonFixture& fx) {
+    std::vector<int> f0;
+    RawClient c(fx.sock_path); auto r0 = c.register_rank(0, &f0);
+    for (int fd : f0) close_fd(fd);
+    auto j = c.register_job("sealmiss_job", 63).job;
+    const uint64_t NB = 4096;
+    // Create only param 1 of version 55.
+    auto k1 = mk_key(j, 55, 1, 0, -1, NB);
+    auto e1 = c.can_evict(mk_evict(0, r0.rank_epoch, k1, DEDUP_SEMANTIC_TRUSTED));
+    do_create(c, 0, r0.rank_epoch, e1);
+
+    // Seal requiring params {1,2} must fail (2 missing).
+    SealModelVersionRequest sr;
+    sr.job = j; sr.model_role = MODEL_ROLE_POLICY_ROLLOUT; sr.model_version = 55;
+    sr.fail_if_missing = true; sr.expected_param_ids = {1, 2}; sr.promote = false;
+    auto bad = c.call<SealModelVersionResponse>(OpCode::kSealModelVersion,
+        encode(sr), decode_SealModelVersionResponse);
+    CHECK(!bad.ok);
+    CHECK_EQ(bad.state, (uint32_t)MANIFEST_ERROR);
+
+    // A rollout pull of this (unsealed) version is refused.
+    auto p = c.pull(j, MODEL_ROLE_POLICY_ROLLOUT, 55, e1.object_id, 2, "/tmp/x");
+    CHECK(!p.ok);
+}
+
 }  // namespace
 
 int main() {
@@ -429,7 +537,10 @@ int main() {
         RUN([&]{ test_job_namespace(fx); });
         RUN([&]{ test_dp_attach_and_distinct(fx); });
         RUN([&]{ test_creating_race(fx); });
+        RUN([&]{ test_hash_verified_mismatch(fx); });
+        RUN([&]{ test_duplicate_candidate(fx); });
         RUN([&]{ test_seal_and_pull(fx); });
+        RUN([&]{ test_seal_fail_on_missing(fx); });
         RUN([&]{ test_pull_over_tcp(fx); });
         RUN([&]{ test_seal_empty_ok_but_pull_rejects_unsealed(fx); });
     }

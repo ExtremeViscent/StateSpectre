@@ -26,9 +26,10 @@ run_python() {
     (cd "$ROOT/python_api" && python setup.py build_ext --inplace >/dev/null 2>&1)
     echo "==> Running python end-to-end test against a live daemon"
     local sock="/tmp/fastoffload_runtests_$$.sock"
+    local tcp_port=$(( 19000 + (RANDOM % 800) ))
     rm -f "$sock"
     OFLD_LOG_LEVEL=1 "$BUILD/offloadd" --smoke-arena-mb 8192 --numa 0 --gpu "$GPU" \
-        --socket "$sock" &
+        --socket "$sock" --tcp-port "$tcp_port" &
     local dpid=$!
     sleep 1
     local rc=0
@@ -46,6 +47,12 @@ run_python() {
         ( cd "$ROOT/python_api" && \
           PYTHONPATH="$(pwd)" CUDA_VISIBLE_DEVICES="$GPU" \
           python "$ROOT/tests/python/test_llm_workload.py" "$sock" ) || rc=$?
+    fi
+    if [ $rc -eq 0 ]; then
+        echo "==> Running v2 canonical + rollout-pull e2e test"
+        ( cd "$ROOT/python_api" && \
+          PYTHONPATH="$(pwd)" CUDA_VISIBLE_DEVICES="$GPU" \
+          python "$ROOT/tests/python/test_canonical_e2e.py" "$sock" "$tcp_port" ) || rc=$?
     fi
     kill "$dpid" 2>/dev/null || true
     wait "$dpid" 2>/dev/null || true
