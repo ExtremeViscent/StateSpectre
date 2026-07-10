@@ -34,6 +34,12 @@ bool recv_frame(int sock, OpCode* op, std::vector<uint8_t>* payload,
 // socket file first. Returns the listening fd. Throws on failure.
 int uds_listen(const std::string& path, int backlog = 128);
 
+// Create, bind, and listen on a TCP socket on the given host-order port (all
+// interfaces, SO_REUSEADDR). Returns the listening fd. Throws on failure. Used
+// by the v2 canonical control endpoint so remote rollout engines can reach the
+// manifest/pull RPCs. Frames on this fd carry NO SCM_RIGHTS fds.
+int tcp_listen(uint16_t port, int backlog = 128);
+
 // Accept one connection. Returns connected fd (>=0), or -1 if interrupted.
 int uds_accept(int listen_fd);
 

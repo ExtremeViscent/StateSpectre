@@ -468,6 +468,10 @@ void OffloadDaemon::run() {
         throw std::runtime_error(std::string("pipe() failed: ") + std::strerror(errno));
 
     listen_fd_ = uds_listen(cfg_.socket_path);
+    // Optional TCP control endpoint for remote rollout engines (v2).
+    if (cfg_.v2_control_tcp_port != 0) {
+        tcp_listen_fd_ = tcp_listen(static_cast<uint16_t>(cfg_.v2_control_tcp_port));
+    }
     running_.store(true);
     workers_running_.store(true);
 
@@ -510,6 +514,7 @@ void OffloadDaemon::run() {
     readback_threads_.clear();
 
     if (listen_fd_ >= 0) { ::close(listen_fd_); listen_fd_ = -1; }
+    if (tcp_listen_fd_ >= 0) { ::close(tcp_listen_fd_); tcp_listen_fd_ = -1; }
     ::unlink(cfg_.socket_path.c_str());
     if (stop_pipe_[0] >= 0) { ::close(stop_pipe_[0]); stop_pipe_[0] = -1; }
     if (stop_pipe_[1] >= 0) { ::close(stop_pipe_[1]); stop_pipe_[1] = -1; }
@@ -527,29 +532,34 @@ void OffloadDaemon::request_stop() {
 
 void OffloadDaemon::accept_loop() {
     while (running_.load()) {
-        struct pollfd pfds[2];
+        struct pollfd pfds[3];
         pfds[0].fd = listen_fd_;
         pfds[0].events = POLLIN;
         pfds[0].revents = 0;
         pfds[1].fd = stop_pipe_[0];
         pfds[1].events = POLLIN;
         pfds[1].revents = 0;
-        int rc = ::poll(pfds, 2, -1);
+        pfds[2].fd = tcp_listen_fd_;   // -1 when disabled; poll() ignores <0 fds
+        pfds[2].events = POLLIN;
+        pfds[2].revents = 0;
+        int rc = ::poll(pfds, 3, -1);
         if (rc < 0) {
             if (errno == EINTR) continue;
             OFLD_ERR(TAG, "poll failed: %s", std::strerror(errno));
             break;
         }
         if (pfds[1].revents & POLLIN) break;  // stop requested
-        if (pfds[0].revents & POLLIN) {
-            int fd = uds_accept(listen_fd_);
-            if (fd < 0) continue;
+        auto accept_on = [&](int lfd) {
+            int fd = uds_accept(lfd);   // accept() works for both AF_UNIX + AF_INET
+            if (fd < 0) return;
             {
                 std::lock_guard<std::mutex> g(conn_threads_mu_);
                 conn_fds_.insert(fd);
                 conn_threads_.emplace_back([this, fd] { serve_connection(fd); });
             }
-        }
+        };
+        if (pfds[0].revents & POLLIN) accept_on(listen_fd_);
+        if ((pfds[2].revents & POLLIN) && tcp_listen_fd_ >= 0) accept_on(tcp_listen_fd_);
     }
 }
 

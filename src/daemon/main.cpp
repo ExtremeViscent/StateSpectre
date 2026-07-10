@@ -31,7 +31,7 @@ void handle_signal(int sig) {
 void usage(const char* argv0) {
     std::fprintf(stderr,
         "usage: %s [--config PATH] [--socket PATH] [--trace PATH]\n"
-        "          [--smoke-arena-mb N] [--numa N] [--gpu N]\n",
+        "          [--smoke-arena-mb N] [--numa N] [--gpu N] [--tcp-port N]\n",
         argv0);
 }
 
@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
     uint64_t smoke_arena_mb = 0;
     uint32_t numa = 0;
     uint32_t gpu = 0;
+    uint32_t tcp_port = 0;
     bool have_smoke = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -65,6 +66,7 @@ int main(int argc, char** argv) {
         }
         else if (a == "--numa") numa = static_cast<uint32_t>(std::strtoul(next("--numa").c_str(), nullptr, 10));
         else if (a == "--gpu") gpu = static_cast<uint32_t>(std::strtoul(next("--gpu").c_str(), nullptr, 10));
+        else if (a == "--tcp-port") tcp_port = static_cast<uint32_t>(std::strtoul(next("--tcp-port").c_str(), nullptr, 10));
         else if (a == "-h" || a == "--help") { usage(argv[0]); return 0; }
         else {
             std::fprintf(stderr, "error: unknown argument '%s'\n", a.c_str());
@@ -89,6 +91,7 @@ int main(int argc, char** argv) {
     }
 
     if (!socket_override.empty()) cfg.socket_path = socket_override;
+    if (tcp_port != 0) cfg.v2_control_tcp_port = tcp_port;
 
     if (!trace_path.empty()) {
         offload::Trace::instance().enable(trace_path);

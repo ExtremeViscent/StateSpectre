@@ -2,6 +2,8 @@
 
 #include <errno.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <time.h>
@@ -204,6 +206,32 @@ int uds_listen(const std::string& path, int backlog) {
         throw std::runtime_error(std::string("listen failed: ") + strerror(e));
     }
     OFLD_INFO("uds", "listening on %s (fd=%d)", path.c_str(), fd);
+    return fd;
+}
+
+int tcp_listen(uint16_t port, int backlog) {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) throw std::runtime_error(std::string("tcp socket() failed: ") + strerror(errno));
+    int one = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+    if (::bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        int e = errno;
+        ::close(fd);
+        throw std::runtime_error(std::string("tcp bind(port=") +
+                                 std::to_string(port) + ") failed: " + strerror(e));
+    }
+    if (::listen(fd, backlog) < 0) {
+        int e = errno;
+        ::close(fd);
+        throw std::runtime_error(std::string("tcp listen failed: ") + strerror(e));
+    }
+    OFLD_INFO("uds", "TCP control listening on port %u (fd=%d)", (unsigned)port, fd);
     return fd;
 }
 

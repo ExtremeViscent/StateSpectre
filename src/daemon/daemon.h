@@ -370,6 +370,11 @@ class OffloadDaemon {
 
     // lifecycle
     int listen_fd_ = -1;
+    // Optional TCP control endpoint for remote rollout engines (v2). -1 unless
+    // cfg_.v2_control_tcp_port != 0. Serves the SAME dispatch as the UDS, but
+    // never passes fds (SCM_RIGHTS is UDS-only), so remote clients use only the
+    // canonical/rollout RPCs (RegisterRank returns fds → local ranks only).
+    int tcp_listen_fd_ = -1;
     int stop_pipe_[2] = {-1, -1};   // self-pipe: [0]=read, [1]=write
     std::atomic<bool> running_{false};
     std::atomic<bool> workers_running_{false};

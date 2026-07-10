@@ -7,6 +7,10 @@
 
 #include <unistd.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -351,6 +355,72 @@ static void test_quota(DaemonFixture& fx) {
     CHECK_EQ(ev.action, (uint32_t)ATTACH_ACTION_QUOTA_EXCEEDED);
 }
 
+// --------------------------------------------------------------------------
+// §5 Export over the TCP debug transport: stand up a tiny TCP receiver, seal,
+// then PullTensor(TCP) and verify the received header + payload bytes.
+// --------------------------------------------------------------------------
+static void test_pull_over_tcp(DaemonFixture& fx) {
+    std::vector<int> f0;
+    RawClient c(fx.sock_path); auto r0 = c.register_rank(0, &f0);
+    for (int fd : f0) close_fd(fd);
+    auto j = c.register_job("tcp_pull_job", 91).job;
+    const uint64_t NB = 4096;
+    auto k = mk_key(j, /*version=*/5, /*param=*/1, 0, -1, NB);
+    auto e = c.can_evict(mk_evict(0, r0.rank_epoch, k, DEDUP_SEMANTIC_TRUSTED));
+    do_create(c, 0, r0.rank_epoch, e, 0x1234, 0x5678);
+    auto s = c.seal(j, MODEL_ROLE_POLICY_ROLLOUT, 5, true, true);
+    CHECK(s.ok);
+
+    // Bind an ephemeral TCP port; hand its address to PullTensor.
+    int lfd = ::socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(lfd >= 0);
+    int one = 1; ::setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    struct sockaddr_in addr; std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET; addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    CHECK(::bind(lfd, (struct sockaddr*)&addr, sizeof(addr)) == 0);
+    CHECK(::listen(lfd, 4) == 0);
+    socklen_t alen = sizeof(addr);
+    ::getsockname(lfd, (struct sockaddr*)&addr, &alen);
+    uint16_t port = ntohs(addr.sin_port);
+
+    // Receiver thread: accept one connection, read 40-byte header + NB payload.
+    uint64_t got_bytes = 0, got_object = 0;
+    bool magic_ok = false;
+    std::thread rx([&]{
+        int cfd = ::accept(lfd, nullptr, nullptr);
+        if (cfd < 0) return;
+        uint8_t hdr[40];
+        size_t off = 0;
+        while (off < sizeof(hdr)) {
+            ssize_t n = ::read(cfd, hdr + off, sizeof(hdr) - off);
+            if (n <= 0) break;
+            off += n;
+        }
+        uint32_t magic; std::memcpy(&magic, hdr, 4);
+        magic_ok = (magic == 0x4F464558u);  // 'OFEX'
+        std::memcpy(&got_object, hdr + 8, 8);
+        std::memcpy(&got_bytes, hdr + 16, 8);
+        // drain payload
+        std::vector<uint8_t> buf(NB); off = 0;
+        while (off < NB) {
+            ssize_t n = ::read(cfd, buf.data() + off, NB - off);
+            if (n <= 0) break;
+            off += n;
+        }
+        ::close(cfd);
+    });
+
+    std::string dst = "127.0.0.1:" + std::to_string(port);
+    auto p = c.pull(j, MODEL_ROLE_POLICY_ROLLOUT, 5, e.object_id, /*TCP=*/1, dst);
+    rx.join();
+    ::close(lfd);
+    CHECK(p.ok);
+    CHECK(magic_ok);
+    CHECK_EQ(got_bytes, NB);
+    CHECK_EQ(got_object, e.object_id);
+}
+
 }  // namespace
 
 int main() {
@@ -360,6 +430,7 @@ int main() {
         RUN([&]{ test_dp_attach_and_distinct(fx); });
         RUN([&]{ test_creating_race(fx); });
         RUN([&]{ test_seal_and_pull(fx); });
+        RUN([&]{ test_pull_over_tcp(fx); });
         RUN([&]{ test_seal_empty_ok_but_pull_rejects_unsealed(fx); });
     }
     {
