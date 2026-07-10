@@ -68,12 +68,39 @@ option(OFLD_WITH_LIBFABRIC "Build the north_comm/libfabric export backend" OFF)
 if(OFLD_WITH_LIBFABRIC)
   target_sources(ofld_daemon PRIVATE ${DAEMON_DIR}/export_libfabric.cpp)
   target_compile_definitions(ofld_daemon PRIVATE OFLD_WITH_LIBFABRIC=1)
+  # north_comm public headers require C++20 (std::ranges); compile just the
+  # adapter TU at C++20 while the rest of the daemon stays C++17.
+  set_source_files_properties(${DAEMON_DIR}/export_libfabric.cpp
+    PROPERTIES COMPILE_FLAGS "-std=c++20")
   if(NORTH_COMM_DIR)
-    target_include_directories(ofld_daemon PRIVATE ${NORTH_COMM_DIR}/include)
+    target_include_directories(ofld_daemon PRIVATE
+      ${NORTH_COMM_DIR}/include
+      ${NORTH_COMM_DIR}/3rdparty/dlpack/include
+      ${NORTH_COMM_DIR}/build/3rdparty/libfabric/include
+      ${NORTH_COMM_DIR}/3rdparty/libfabric/include)
     find_library(NORTH_COMM_LIB north_comm
                  PATHS ${NORTH_COMM_DIR}/python/north_comm/lib ${NORTH_COMM_DIR}/build)
     if(NORTH_COMM_LIB)
       target_link_libraries(ofld_daemon PUBLIC ${NORTH_COMM_LIB})
+    endif()
+    find_library(FABRIC_LIB fabric
+                 PATHS ${NORTH_COMM_DIR}/build/3rdparty/libfabric/lib
+                       ${NORTH_COMM_DIR}/build/3rdparty/libfabric/src/.libs)
+    if(FABRIC_LIB)
+      target_link_libraries(ofld_daemon PUBLIC ${FABRIC_LIB})
+    endif()
+    # libnorth_comm.so is a pybind extension that references CPython symbols;
+    # embed the concrete libpython it was built against so the standalone daemon
+    # links (the daemon never calls Python — this only satisfies the linker).
+    # Override with -DOFLD_PYTHON_LIB=/path/to/libpython3.X.so if autodetection
+    # picks the wrong ABI (north_comm here is built for CPython 3.12).
+    if(NOT OFLD_PYTHON_LIB)
+      find_library(OFLD_PYTHON_LIB NAMES python3.12 python3.11 python3.10 python3.13 python3
+                   PATHS /opt/conda/envs/bprl/lib /usr/lib64 /opt/conda/envs/torch-base/lib)
+    endif()
+    if(OFLD_PYTHON_LIB)
+      target_link_libraries(ofld_daemon PUBLIC ${OFLD_PYTHON_LIB})
+      message(STATUS "libfabric backend: linking libpython ${OFLD_PYTHON_LIB}")
     endif()
   endif()
 endif()

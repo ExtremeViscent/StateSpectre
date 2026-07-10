@@ -1,5 +1,6 @@
 # Build output
 /build/
+/build_lf/
 python_api/build/
 *.o
 *.a
@@ -12,3 +13,7 @@ __pycache__/
 # Local test sockets / traces
 *.sock
 /tmp/
+# Cross-node RDMA test run dirs
+/.xnode_run/
+/.xnode_local/
+/.xnode_run*/

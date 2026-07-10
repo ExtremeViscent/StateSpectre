@@ -21,6 +21,8 @@
 
 #include "export_backend.h"
 
+#include <array>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -56,17 +58,31 @@ ExportResult send_libfabric(const ExportRequest& req, const void* data,
         return r;
     }
     try {
-        auto network = north_comm::GetNetwork(nic);
+        // north_comm opens a local network on our own NIC and connects to the
+        // receiver's advertised IB address. The descriptor's nic is the
+        // RECEIVER's device name; the daemon's local device may differ, so allow
+        // an explicit override via OFLD_LIBFABRIC_NIC (falls back to the
+        // descriptor nic when unset, which is correct on a homogeneous fabric).
+        const char* env_nic = std::getenv("OFLD_LIBFABRIC_NIC");
+        std::string local_nic = (env_nic && env_nic[0]) ? env_nic : nic;
+        auto network = north_comm::GetNetwork(local_nic);
         auto node = std::make_shared<north_comm::LibfabricEndpointNode>(
             north_comm::IbAddress(addr_hex), network);
         north_comm::LibfabricEndpoint ep(node);
         ep.Connect();
 
-        // Stage into a north_comm host Bytes buffer, register, send. Buffer
-        // exposes the underlying BufferNode via operator->, whose `data` is the
-        // aligned host pointer.
-        north_comm::Buffer buf = north_comm::Buffer::Alloc<north_comm::Bytes>(
-            north_comm::Bytes::Metadata(nbytes));
+        // Stage into a north_comm host Tensor buffer (1-D uint8, nbytes long)
+        // so the receiver can recover it losslessly via DLPack. A Bytes buffer
+        // would force a UTF-8 str round-trip that corrupts binary weights.
+        std::array<int64_t, north_comm::kMaxTensorDims> shape{};
+        std::array<int64_t, north_comm::kMaxTensorDims> strides{};
+        shape[0] = static_cast<int64_t>(nbytes);
+        strides[0] = 1;
+        DLDataType u8{kDLUInt, 8, 1};
+        north_comm::Tensor::Metadata meta(north_comm::Device(kDLCPU, 0),
+                                          /*ndim=*/1, u8, shape, strides,
+                                          /*byte_offset=*/0, /*is_contiguous=*/true);
+        north_comm::Buffer buf = north_comm::Buffer::Alloc<north_comm::Tensor>(meta);
         std::memcpy(buf->data, data, nbytes);
         network->RegisterSendMemory(buf);
         ep.Send(buf);

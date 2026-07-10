@@ -118,14 +118,14 @@ ExportResult send_file(const ExportRequest& req, const void* data, uint64_t nbyt
     return r;
 }
 
+}  // namespace
+
 #ifdef OFLD_WITH_LIBFABRIC
-// north_comm adapter. Compiled only with -DOFLD_WITH_LIBFABRIC and the
-// north_comm headers/lib on the include/link path. See export_libfabric.cpp.
+// north_comm adapter, defined in export_libfabric.cpp (namespace-scope, so it
+// links across TUs). Only declared/used when -DOFLD_WITH_LIBFABRIC is set.
 ExportResult send_libfabric(const ExportRequest& req, const void* data,
                             uint64_t nbytes);
 #endif
-
-}  // namespace
 
 ExportResult export_send(const ExportRequest& req, const void* data,
                          uint64_t nbytes, uint32_t fallback_transport) {
