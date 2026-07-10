@@ -1,0 +1,49 @@
+flowchart TD
+  subgraph Rank_Local[Rank-local tensor]
+    RT0[GPU_VALID]
+    RT1[D2H_IN_FLIGHT]
+    RT2[LOCAL_INVALIDATED]
+    RT3[RESTORED_GPU]
+  end
+
+  subgraph Canonical_Object[Canonical object]
+    O0[MISSING]
+    O1[CREATING]
+    O2[VALID_PINNED]
+    O3[VALID_PAGEABLE]
+    O4[VALID_NVME]
+    O5[SEALED]
+    O6[EXPORT_IN_FLIGHT]
+    OERR[ERROR]
+  end
+
+  subgraph Manifest[Manifest]
+    M0[OPEN]
+    M1[SEALING]
+    M2[SEALED]
+    M3[REVOKED]
+  end
+
+  RT0 -->|RequestCanonicalEvict| O0
+  O0 -->|NEED_D2H_CREATE| O1
+  RT0 -->|cudaMemcpyAsync D2H| RT1
+  RT1 -->|D2H complete| O2
+  O2 -->|commit object| RT2
+
+  O2 -->|drain| O3
+  O3 -->|spill| O4
+  O4 -->|readback| O2
+  O3 -->|stage to pinned/export| O2
+
+  O2 -->|seal version| M1
+  O3 -->|seal version| M1
+  O4 -->|seal version| M1
+  M0 --> M1 --> M2
+
+  M2 -->|rollout PullTensor| O6
+  O6 -->|export complete| O2
+  O6 -->|export complete| O3
+  O6 -->|export complete| O4
+
+  O1 -->|creator failed| OERR
+  M1 -->|missing object| OERR

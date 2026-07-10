@@ -8,10 +8,26 @@
 >   - [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) — architecture & what was built
 >   - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — measured benchmarks (80 GB evict ≈ 1.66 s on PCIe Gen5)
 >   - [docs/USAGE.md](docs/USAGE.md) — build, run, configure, test
+>   - **[docs/UPDATE_V2.md](docs/UPDATE_V2.md) — v2 canonical model-state store,
+>     dedup, sealed manifests, rollout pull (LLM RL post-training)**
 >
 > Quick start: `mkdir build && cd build && cmake .. && make -j && ctest` — then
 > `../run_tests.sh` for the full GPU + Python suite. All seven milestones in
 > `impl/IMPLEMENTATION_PLAN.md` are implemented and verified.
+
+---
+
+## v2 update — canonical model-state store
+
+The **additive v2 update** turns rank-local tensor offload into a versioned,
+deduplicated **canonical model-state object store** for LLM RL post-training,
+with sealed manifests and rollout-engine weight pull, layered over v1 without
+changing v1 behavior. See **[docs/UPDATE_V2.md](docs/UPDATE_V2.md)** and the
+design narrative in [docs/update_v2/](docs/update_v2/). Implementation:
+`src/daemon/canonical*.cpp` (object store, dedup, manifests, export leases),
+`src/daemon/export_backend.cpp` (TCP/file/libfabric transports),
+`python_api/fastoffload` (`canonical_key`, `canonical_evict`,
+`seal_model_version`, `RolloutWeightClient`).
 
 ---
 

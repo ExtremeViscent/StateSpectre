@@ -34,3 +34,18 @@ offload_design_pack/src/tools/offload_stat.cpp
 offload_design_pack/tests/cpp/{test_wire,test_config,test_layout,test_daemon_rpc,test_fault_injection,test_evict_restore,bench}.cpp
 offload_design_pack/tests/python/{test_python_e2e,test_multiproc,test_llm_workload}.py
 offload_design_pack/tests/BENCHMARKS.md
+
+# ---- v2 canonical model-state update (added) ----
+offload_design_pack/docs/UPDATE_V2.md
+offload_design_pack/docs/update_v2/{00_UPDATE_OVERVIEW,01_CANONICAL_MODEL_STATE_STORE,02_DEDUPLICATION_POLICY,03_ROLLOUT_PULL_AND_EXPORT,04_MULTI_JOB_NAMESPACE_AND_QUOTAS,MIGRATION_FROM_V1,LIBFABRIC_EXPORT_BACKEND,IMPLEMENTATION_MILESTONES_V2}.md
+offload_design_pack/abi/offload_canonical_abi.hpp
+offload_design_pack/rpc/offload_canonical.proto
+offload_design_pack/diagrams/state_machine_v2.mmd
+offload_design_pack/config/offload_manager_v2.yaml
+offload_design_pack/python_api/canonical_python_api.md
+offload_design_pack/src/common/{protocol_v2.h,wire_v2.{h,cpp}}
+offload_design_pack/src/daemon/{canonical.h,canonical.cpp,canonical_rollout.cpp,export_backend.{h,cpp},export_libfabric.cpp}
+offload_design_pack/python_api/fastoffload/{_wire,_rollout}.py
+offload_design_pack/tests/cpp/{test_wire_v2,test_canonical}.cpp
+offload_design_pack/tests/python/test_canonical_e2e.py
+offload_design_pack/tests/TEST_PLAN_V2.md
