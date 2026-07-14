@@ -224,3 +224,34 @@ with fo.offload_context(device="cuda:0") as off:
     off.wait(handles)
     k_cache, v_cache = off.restore_many(handles, device="cuda:0")
 ```
+
+## 12. Tensor ownership and the right offload mode
+
+`evict(..., invalidate="set_empty")` frees VRAM by replacing the storage on the
+tensor object you pass (`set_data(empty)`). Whether that actually frees memory
+depends on who owns the storage. Match the mode to the tensor:
+
+| Tensor shape | Frees VRAM on evict? | Correct API |
+|---|---|---|
+| **Standalone, sole owner** — optimizer-state tensors, `param.grad` | Yes | `off.evict(t)` — destructive |
+| **`.data` view** — `param.data` | Only after you reassign the holder | `off.evict(param.data)` **and** `param.data = h.restore(...)` |
+| **Aliased flat buffer** — Megatron DDP `buffer.param_data`/`grad_data`, distributed-optimizer master-param groups, FSDP `FlatParameter` | No (aliases share the storage; `set_empty` mutates a throwaway impl and desyncs them) | **non-destructive** `off.copy()` + `storage().resize_(0)`, then `storage().resize_(nbytes)` + `h.restore_into(buf)` |
+
+For the aliased-buffer case, preserve the **Storage object** (resize it; never
+reassign it) so every alias/view keeps observing the storage's data pointer:
+
+```python
+# Offload half — free VRAM without breaking aliases.
+h = off.copy(buf, wait=True)          # D2H; buf untouched. wait=True is REQUIRED
+buf.untyped_storage().resize_(0)      # free VRAM, keep the Storage object
+
+# ... training proceeds without buf resident ...
+
+# Restore half — realloc the SAME storage, H2D back into it.
+buf.untyped_storage().resize_(h.nbytes)
+h.restore_into(buf)                   # in-place H2D; aliases see the data again
+```
+
+`wait=True` on the `copy` is mandatory: the D2H must complete before
+`resize_(0)` frees the source. `restore_into` allocates nothing and requires
+`dst` to already be sized to the offloaded byte count.

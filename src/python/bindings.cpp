@@ -270,6 +270,40 @@ class Context {
         return out;
     }
 
+    // ---- restore into an EXISTING device buffer (in-place H2D) ------------
+    // For aliased flat buffers (Megatron DDP param_data/grad_data, distributed-
+    // optimizer master-param groups, FSDP FlatParameter) destructive evict is
+    // wrong: other tensors alias the storage. The correct cycle is a
+    // non-destructive off.copy() for the D2H, then the caller frees VRAM with
+    // storage().resize_(0) (preserving the Storage object so aliases stay
+    // valid), and on the way back storage().resize_(nbytes) + this call to H2D
+    // the bytes into that same storage. Does NOT allocate — H2Ds into dst's
+    // current data_ptr(), which the caller has already sized to nbytes.
+    void restore_into(torch::Tensor dst, std::uint64_t tensor_id,
+                      std::uint64_t version, py::object stream_obj, bool wait) {
+        if (!dst.is_cuda()) {
+            throw std::runtime_error("restore_into: dst must be a CUDA tensor");
+        }
+        if (!dst.is_contiguous()) {
+            throw std::runtime_error("restore_into: dst must be contiguous");
+        }
+        const int device_index = dst.get_device();
+        const std::uint64_t dev_ptr =
+            reinterpret_cast<std::uint64_t>(dst.data_ptr());
+        const std::uint64_t nbytes =
+            static_cast<std::uint64_t>(dst.numel()) * dst.element_size();
+        const StreamHandle stream = resolve_stream(stream_obj, device_index);
+
+        RestoreResult r;
+        {
+            py::gil_scoped_release unlock;
+            r = agent_->restore(tensor_id, version, dev_ptr, nbytes, stream, wait);
+        }
+        if (!r.ok) {
+            throw std::runtime_error("restore_into failed: " + r.message);
+        }
+    }
+
     // ---- introspection / lifecycle ---------------------------------------
     bool is_offloaded(std::uint64_t tensor_id, std::uint64_t version) const {
         return agent_->is_offloaded(tensor_id, version);
@@ -468,6 +502,9 @@ PYBIND11_MODULE(_fastoffload, m) {
         .def("restore", &Context::restore, py::arg("tensor_id"), py::arg("version"),
              py::arg("shape"), py::arg("scalar_type"), py::arg("device_index"),
              py::arg("stream"), py::arg("wait"))
+        .def("restore_into", &Context::restore_into, py::arg("dst"),
+             py::arg("tensor_id"), py::arg("version"), py::arg("stream"),
+             py::arg("wait"))
         .def("is_offloaded", &Context::is_offloaded, py::arg("tensor_id"),
              py::arg("version"))
         .def("wait_offloaded", &Context::wait_offloaded, py::arg("tensor_id"),

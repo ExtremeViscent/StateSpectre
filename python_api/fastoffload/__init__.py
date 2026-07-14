@@ -275,6 +275,41 @@ class OffloadHandle:
             return out
         return self._restore_into_new(device=device, stream=stream, wait=wait)
 
+    def restore_into(self, dst: torch.Tensor, stream=None,
+                     wait: bool = True) -> torch.Tensor:
+        """Restore into an EXISTING device tensor's storage (in-place H2D).
+
+        Unlike :meth:`restore`, this allocates nothing — it H2Ds the offloaded
+        bytes into ``dst``'s current storage. This is the restore half of the
+        offload cycle for **aliased flat buffers** (Megatron DDP
+        ``buffer.param_data`` / ``grad_data``, distributed-optimizer master-param
+        groups, FSDP ``FlatParameter``), where destructive ``evict`` is wrong
+        because other tensors alias the same storage.
+
+        Correct non-destructive cycle for those buffers::
+
+            h = off.copy(buf, wait=True)          # D2H; buf untouched
+            buf.untyped_storage().resize_(0)      # free VRAM, KEEP the Storage object
+            ...
+            buf.untyped_storage().resize_(h.nbytes)   # realloc the SAME Storage object
+            h.restore_into(buf)                        # H2D back into it
+
+        Preserving the Storage object (resize, don't reassign) keeps every
+        alias/view valid — they observe the storage's new data pointer. Note
+        ``wait=True`` on the ``copy`` is mandatory: the D2H must finish before
+        ``resize_(0)`` frees the source out from under the copy.
+        """
+        if self._discarded:
+            raise RuntimeError("restore_into: handle has been discarded")
+        dst_nbytes = dst.numel() * dst.element_size()
+        if dst_nbytes != self.nbytes:
+            raise ValueError(
+                f"restore_into: dst has {dst_nbytes} bytes but the offloaded "
+                f"tensor is {self.nbytes} bytes (resize the storage to match "
+                f"before restoring)")
+        self._off._ctx.restore_into(dst, self.tensor_id, self.version, stream, wait)
+        return dst
+
     # ---- discard ---------------------------------------------------------- #
     def discard(self) -> None:
         """Drop the daemon-side lease/metadata for this tensor (best-effort)."""
