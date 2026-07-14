@@ -5,7 +5,7 @@
 # rollout version, and leaves the daemon running until 'done' appears in WORKDIR.
 set -uo pipefail
 
-PACK=/apdcephfs_zwfy10/share_303541817/hunyuan/stellezhang/dev/bprl/offload_design_pack
+PACK=/apdcephfs_zwfy10/share_303541817/hunyuan/stellezhang/dev/bprl/StateSpectre
 NC=/apdcephfs_zwfy10/share_303541817/hunyuan/stellezhang/dev/bprl/north_comm
 export LD_LIBRARY_PATH="$NC/build/3rdparty/libfabric/lib:/opt/gdrcopy/lib:/opt/conda/envs/bprl/lib:$PACK/build_lf/vendored_libs:${LD_LIBRARY_PATH:-}"
 
