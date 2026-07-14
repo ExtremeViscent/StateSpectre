@@ -106,6 +106,7 @@ struct CanonicalObject {
 
     uint32_t refcount = 0;           // rank attachments
     uint32_t export_refcount = 0;    // in-flight remote transfers
+    uint32_t restore_refcount = 0;   // in-flight LOCAL restores (H2D read-backs)
     uint32_t producer_rank = 0;
     uint32_t flags = 0;
 

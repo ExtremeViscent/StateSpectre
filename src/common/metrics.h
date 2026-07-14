@@ -61,6 +61,7 @@ enum class Metric : int {
     kCanonicalD2HBytesAvoided,
     kCanonicalHashMismatch,
     kCanonicalStaleVersionReject,
+    kCanonicalRestoreServed,
     kQuotaRejections,
     kManifestSealed,
     kManifestSealFailed,

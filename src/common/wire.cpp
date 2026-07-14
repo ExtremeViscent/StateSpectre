@@ -27,6 +27,8 @@ const char* op_name(OpCode op) {
         case OpCode::kGetLatestSealedVersion: return "GetLatestSealedVersion";
         case OpCode::kGetManifest:            return "GetManifest";
         case OpCode::kPullTensor:             return "PullTensor";
+        case OpCode::kRequestCanonicalRestore: return "RequestCanonicalRestore";
+        case OpCode::kReleaseCanonicalRestore: return "ReleaseCanonicalRestore";
     }
     return "Unknown";
 }

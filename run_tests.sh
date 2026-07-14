@@ -60,6 +60,12 @@ run_python() {
           PYTHONPATH="$(pwd)" CUDA_VISIBLE_DEVICES="$GPU" \
           python "$ROOT/tests/python/test_aliased_restore_into.py" "$sock" ) || rc=$?
     fi
+    if [ $rc -eq 0 ]; then
+        echo "==> Running canonical offload/reload round-trip test"
+        ( cd "$ROOT/python_api" && \
+          PYTHONPATH="$(pwd)" CUDA_VISIBLE_DEVICES="$GPU" \
+          python "$ROOT/tests/python/test_canonical_restore.py" "$sock" ) || rc=$?
+    fi
     kill "$dpid" 2>/dev/null || true
     wait "$dpid" 2>/dev/null || true
     rm -f "$sock"

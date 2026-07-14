@@ -188,6 +188,37 @@ static void test_frame_roundtrip() {
     CHECK_EQ(d.object_id, 42u);
 }
 
+static void test_canonical_restore() {
+    RequestCanonicalRestoreRequest req;
+    req.rank_id = 3; req.rank_epoch = 9; req.object_id = 998812;
+    req.gpu_id = 1; req.numa_node = 0;
+    auto b = encode(req);
+    auto d = decode_RequestCanonicalRestoreRequest(b.data(), b.size());
+    CHECK_EQ(d.rank_id, 3u);
+    CHECK_EQ(d.object_id, 998812u);
+    CHECK_EQ(d.gpu_id, 1u);
+
+    RequestCanonicalRestoreResponse resp;
+    resp.ok = true; resp.object_id = 998812; resp.nbytes = 117440512ull;
+    resp.arena_id = 2; resp.arena_offset = 4096;
+    auto rb = encode(resp);
+    auto rd = decode_RequestCanonicalRestoreResponse(rb.data(), rb.size());
+    CHECK(rd.ok);
+    CHECK_EQ(rd.nbytes, 117440512ull);
+    CHECK_EQ(rd.arena_id, 2u);
+    CHECK_EQ(rd.arena_offset, 4096u);
+
+    ReleaseCanonicalRestoreRequest rel;
+    rel.rank_id = 3; rel.rank_epoch = 9; rel.object_id = 998812;
+    auto lb = encode(rel);
+    auto ld = decode_ReleaseCanonicalRestoreRequest(lb.data(), lb.size());
+    CHECK_EQ(ld.object_id, 998812u);
+    ReleaseCanonicalRestoreResponse lresp; lresp.ok = true; lresp.message = "ok";
+    auto lrb = encode(lresp);
+    auto lrd = decode_ReleaseCanonicalRestoreResponse(lrb.data(), lrb.size());
+    CHECK(lrd.ok);
+}
+
 int main() {
     RUN(test_register_job);
     RUN(test_canonical_evict);
@@ -196,5 +227,6 @@ int main() {
     RUN(test_manifest);
     RUN(test_pull);
     RUN(test_frame_roundtrip);
+    RUN(test_canonical_restore);
     return ofldtest::summary("wire_v2");
 }

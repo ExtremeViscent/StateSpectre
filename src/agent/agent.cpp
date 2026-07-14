@@ -1278,4 +1278,75 @@ PullTensorResponse OffloadAgent::pull_tensor(const PullTensorRequest& r) {
     return impl_->rpc->pull_tensor(r);
 }
 
+RestoreResult OffloadAgent::canonical_restore(uint64_t object_id, uint64_t dev_ptr,
+                                              uint64_t nbytes, StreamHandle stream,
+                                              bool wait) {
+    Impl* d = impl_.get();
+    RestoreResult r;
+    cudaStream_t s = (stream == kInternalStream)
+                         ? d->internal_stream
+                         : reinterpret_cast<cudaStream_t>(stream);
+
+    // Ask the daemon to make the object readable in a pinned arena. It bumps a
+    // restore refcount so the backing can't be drained/recycled during our H2D.
+    RequestCanonicalRestoreRequest rq;
+    rq.rank_id = d->rank_id;
+    rq.rank_epoch = d->rank_epoch;
+    rq.object_id = object_id;
+    rq.gpu_id = static_cast<uint32_t>(d->device);
+    rq.numa_node = static_cast<uint32_t>(d->numa);
+    RequestCanonicalRestoreResponse rr;
+    // Poll while the object is momentarily transitioning between tiers (a drain
+    // may be in flight right after create), mirroring restore()'s readiness loop.
+    const uint64_t timeout_ns = 600ull * 1000000000ull;  // 10 min guard
+    uint64_t start = now_mono_ns();
+    for (;;) {
+        try { rr = d->rpc->request_canonical_restore(rq); }
+        catch (const std::exception& e) {
+            r.ok = false; r.message = std::string("canonical_restore rpc: ") + e.what();
+            return r;
+        }
+        if (rr.ok || !rr.retriable) break;
+        if (now_mono_ns() - start > timeout_ns) {
+            r.ok = false; r.message = "canonical_restore: object stuck transitioning";
+            return r;
+        }
+        struct timespec ts { 0, 2 * 1000000L };  // 2 ms
+        nanosleep(&ts, nullptr);
+    }
+    if (!rr.ok) { r.ok = false; r.message = rr.message; return r; }
+    if (nbytes > rr.nbytes) {
+        // Never read past the object; release and fail.
+        ReleaseCanonicalRestoreRequest rel;
+        rel.rank_id = d->rank_id; rel.rank_epoch = d->rank_epoch; rel.object_id = object_id;
+        try { d->rpc->release_canonical_restore(rel); } catch (...) {}
+        r.ok = false; r.message = "canonical_restore: dst larger than object";
+        return r;
+    }
+
+    // Direct H2D from the shared pinned arena region into the caller's buffer.
+    bool ok = true;
+    try {
+        void* src = d->slot_host_ptr(rr.arena_id, rr.arena_offset);
+        d->ensure_registered(reinterpret_cast<uint64_t>(src), nbytes);
+        d->restore_count.fetch_add(1, std::memory_order_relaxed);
+        CUDA_CHECK(cudaMemcpyAsync(reinterpret_cast<void*>(dev_ptr), src, nbytes,
+                                   cudaMemcpyHostToDevice, s));
+        if (wait) CUDA_CHECK(cudaStreamSynchronize(s));
+    } catch (const std::exception& e) {
+        ok = false; r.message = std::string("canonical_restore H2D: ") + e.what();
+    }
+
+    // Release the restore hold. If wait==false the caller must ensure the H2D
+    // has completed before the object could be drained; for the common
+    // offload/reload path wait==true, so the copy is done here.
+    ReleaseCanonicalRestoreRequest rel;
+    rel.rank_id = d->rank_id; rel.rank_epoch = d->rank_epoch; rel.object_id = object_id;
+    try { d->rpc->release_canonical_restore(rel); } catch (...) {}
+
+    r.ok = ok;
+    if (ok) r.message = "ok";
+    return r;
+}
+
 }  // namespace offload

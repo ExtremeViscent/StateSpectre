@@ -255,3 +255,28 @@ h.restore_into(buf)                   # in-place H2D; aliases see the data again
 `wait=True` on the `copy` is mandatory: the D2H must complete before
 `resize_(0)` frees the source. `restore_into` allocates nothing and requires
 `dst` to already be sized to the offloaded byte count.
+
+## 13. Canonical offload/reload round-trip (trainer reload with DP dedup)
+
+The canonical layer dedups the *write* across data-parallel replicas
+(`ATTACHED_EXISTING` → no D2H), and `CanonicalHandle.restore_into` provides the
+matching *read-back* so a symmetric offload→reload (e.g. free params during
+rollout, then reload them onto the same trainer GPUs) shares one host copy —
+every replica, including one that only attached, reads the same bytes back by
+`object_id`:
+
+```python
+key = off.canonical_key(model_role="policy_trainable", model_version=step,
+                        param_name=name, tensor=w, pp_rank=pp, tp_rank=tp)
+h = off.canonical_evict(w, key, destructive=True)   # create OR attach (dedup)
+# ... rollout runs with VRAM freed ...
+h.restore_into(out)                                  # reload the shared copy by object_id
+```
+
+`restore_into` is read-only w.r.t. the object (the daemon holds it resident for
+the H2D and never frees/migrates it), so all replicas can reload concurrently
+and repeatedly. It resolves the object from whichever tier it currently lives in
+(pinned / pageable / NVMe), warming a cold object back to pinned on first read.
+For aliased flat buffers, combine with the storage-resize recipe in §12:
+`off.copy`/`canonical_evict` → `storage().resize_(0)` → `resize_(nbytes)` →
+`h.restore_into(buf)`.

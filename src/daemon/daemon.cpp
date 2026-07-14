@@ -684,6 +684,16 @@ void OffloadDaemon::dispatch(int fd, OpCode op, const std::vector<uint8_t>& p) {
             body = encode(handle_pull_tensor(decode_PullTensorRequest(d, n)));
             break;
         }
+        case OpCode::kRequestCanonicalRestore: {
+            body = encode(handle_request_canonical_restore(
+                decode_RequestCanonicalRestoreRequest(d, n)));
+            break;
+        }
+        case OpCode::kReleaseCanonicalRestore: {
+            body = encode(handle_release_canonical_restore(
+                decode_ReleaseCanonicalRestoreRequest(d, n)));
+            break;
+        }
         default:
             OFLD_WARN(TAG, "unknown opcode %u", static_cast<unsigned>(op));
             return;
@@ -1438,6 +1448,13 @@ bool OffloadDaemon::force_drain_one(std::unique_lock<std::mutex>& lk) {
         Lease& L = kv.second;
         if (L.is_prefetch) continue;
         if (slot_state(L.base_slot) != OFLD_SLOT_PINNED_VALID) continue;
+        // Never drain a canonical object whose bytes are being read right now
+        // (local restore) or exported — the reader H2Ds from this pinned slot
+        // without holding mu_, so freeing/migrating it would race the copy.
+        if (is_canonical_tid(L.tensor_id)) {
+            CanonicalObject* co = find_object(L.tensor_id & ~kCanonicalTidBit);
+            if (co && (co->restore_refcount > 0 || co->export_refcount > 0)) continue;
+        }
         uint64_t ts = slots_[L.base_slot].last_touch_ns;
         if (ts < best_ts) { best_ts = ts; best_lease = L.lease_id; }
     }

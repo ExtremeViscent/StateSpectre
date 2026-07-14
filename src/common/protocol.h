@@ -52,6 +52,10 @@ enum class OpCode : uint16_t {
     kGetLatestSealedVersion = 24,
     kGetManifest            = 25,
     kPullTensor             = 26,
+    // Local read-back of a canonical object by object_id (trainer offload/reload
+    // round-trip). Strictly read-only: never frees/migrates the object backing.
+    kRequestCanonicalRestore = 27,
+    kReleaseCanonicalRestore = 28,
 };
 
 const char* op_name(OpCode op);

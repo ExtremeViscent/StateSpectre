@@ -171,5 +171,17 @@ PullTensorResponse RpcClient::pull_tensor(const PullTensorRequest& req) {
     auto p = round_trip(sock_, OpCode::kPullTensor, encode(req), nullptr);
     return decode_PullTensorResponse(p.data(), p.size());
 }
+RequestCanonicalRestoreResponse RpcClient::request_canonical_restore(
+    const RequestCanonicalRestoreRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kRequestCanonicalRestore, encode(req), nullptr);
+    return decode_RequestCanonicalRestoreResponse(p.data(), p.size());
+}
+ReleaseCanonicalRestoreResponse RpcClient::release_canonical_restore(
+    const ReleaseCanonicalRestoreRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kReleaseCanonicalRestore, encode(req), nullptr);
+    return decode_ReleaseCanonicalRestoreResponse(p.data(), p.size());
+}
 
 }  // namespace offload

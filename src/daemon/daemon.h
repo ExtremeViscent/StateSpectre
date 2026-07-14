@@ -222,6 +222,10 @@ class OffloadDaemon {
         const GetLatestSealedVersionRequest& req);
     GetManifestResponse handle_get_manifest(const GetManifestRequest& req);
     PullTensorResponse handle_pull_tensor(const PullTensorRequest& req);
+    RequestCanonicalRestoreResponse handle_request_canonical_restore(
+        const RequestCanonicalRestoreRequest& req);
+    ReleaseCanonicalRestoreResponse handle_release_canonical_restore(
+        const ReleaseCanonicalRestoreRequest& req);
 
     // ---- canonical helpers (mu_ held unless noted; canonical.cpp) ----
     static std::string canonical_key_string(const CanonicalTensorKeyWire& k);

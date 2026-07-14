@@ -241,4 +241,47 @@ struct PullTensorResponse {
     std::string transport_metadata;
 };
 
+// ---------------------------------------------------------------------------
+// Local canonical restore (trainer offload/reload round-trip). A rank asks the
+// daemon to make a canonical object readable in a pinned arena and hand back
+// the (arena_id, arena_offset) of its bytes; the rank then H2Ds directly from
+// that shared pinned region into its own GPU storage. This is how a DP replica
+// that got ATTACHED_EXISTING (no local D2H, no rank-local tensor_id) reads the
+// shared bytes back. Strictly read-only: the daemon holds a restore refcount so
+// drain/recycle cannot race the H2D, and never frees the object's backing here.
+// ---------------------------------------------------------------------------
+struct RequestCanonicalRestoreRequest {
+    uint32_t rank_id = 0;
+    uint64_t rank_epoch = 0;
+    uint64_t object_id = 0;
+    uint32_t gpu_id = 0;      // requester's GPU/NUMA, for a readback slot if cold
+    uint32_t numa_node = 0;
+};
+
+struct RequestCanonicalRestoreResponse {
+    bool ok = false;
+    std::string message;
+    // True when the object is momentarily transitioning between tiers (e.g. a
+    // drain is in flight): the caller should retry shortly rather than fail.
+    bool retriable = false;
+    uint64_t object_id = 0;
+    uint64_t nbytes = 0;
+    // Location of the object's bytes in a pinned arena the rank has mapped. The
+    // rank computes its local host pointer from (arena_id, arena_offset) and
+    // H2Ds into its GPU buffer. Valid until ReleaseCanonicalRestore.
+    uint64_t arena_id = 0;
+    uint64_t arena_offset = 0;
+};
+
+struct ReleaseCanonicalRestoreRequest {
+    uint32_t rank_id = 0;
+    uint64_t rank_epoch = 0;
+    uint64_t object_id = 0;
+};
+
+struct ReleaseCanonicalRestoreResponse {
+    bool ok = false;
+    std::string message;
+};
+
 }  // namespace offload

@@ -304,6 +304,35 @@ class Context {
         }
     }
 
+    // ---- canonical restore into an existing GPU buffer (by object_id) -----
+    // The trainer offload/reload read path: reload a canonical object's bytes
+    // (identified only by object_id — no rank-local tensor_id) into dst's
+    // storage via a direct H2D from the daemon's shared pinned arena. Works for
+    // a replica that got ATTACHED_EXISTING (never did a local D2H).
+    void canonical_restore_into(torch::Tensor dst, std::uint64_t object_id,
+                                py::object stream_obj, bool wait) {
+        if (!dst.is_cuda()) {
+            throw std::runtime_error("canonical_restore_into: dst must be a CUDA tensor");
+        }
+        if (!dst.is_contiguous()) {
+            throw std::runtime_error("canonical_restore_into: dst must be contiguous");
+        }
+        const int device_index = dst.get_device();
+        const std::uint64_t dev_ptr =
+            reinterpret_cast<std::uint64_t>(dst.data_ptr());
+        const std::uint64_t nbytes =
+            static_cast<std::uint64_t>(dst.numel()) * dst.element_size();
+        const StreamHandle stream = resolve_stream(stream_obj, device_index);
+        RestoreResult r;
+        {
+            py::gil_scoped_release unlock;
+            r = agent_->canonical_restore(object_id, dev_ptr, nbytes, stream, wait);
+        }
+        if (!r.ok) {
+            throw std::runtime_error("canonical_restore_into failed: " + r.message);
+        }
+    }
+
     // ---- introspection / lifecycle ---------------------------------------
     bool is_offloaded(std::uint64_t tensor_id, std::uint64_t version) const {
         return agent_->is_offloaded(tensor_id, version);
@@ -505,6 +534,8 @@ PYBIND11_MODULE(_state_spectre, m) {
         .def("restore_into", &Context::restore_into, py::arg("dst"),
              py::arg("tensor_id"), py::arg("version"), py::arg("stream"),
              py::arg("wait"))
+        .def("canonical_restore_into", &Context::canonical_restore_into,
+             py::arg("dst"), py::arg("object_id"), py::arg("stream"), py::arg("wait"))
         .def("is_offloaded", &Context::is_offloaded, py::arg("tensor_id"),
              py::arg("version"))
         .def("wait_offloaded", &Context::wait_offloaded, py::arg("tensor_id"),

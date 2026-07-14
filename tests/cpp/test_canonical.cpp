@@ -115,6 +115,20 @@ struct RawClient {
         return call<PullTensorResponse>(OpCode::kPullTensor, encode(r),
                                         decode_PullTensorResponse);
     }
+    RequestCanonicalRestoreResponse can_restore(uint32_t rank, uint64_t epoch,
+                                                uint64_t object_id) {
+        RequestCanonicalRestoreRequest r; r.rank_id = rank; r.rank_epoch = epoch;
+        r.object_id = object_id;
+        return call<RequestCanonicalRestoreResponse>(OpCode::kRequestCanonicalRestore,
+            encode(r), decode_RequestCanonicalRestoreResponse);
+    }
+    ReleaseCanonicalRestoreResponse release_restore(uint32_t rank, uint64_t epoch,
+                                                    uint64_t object_id) {
+        ReleaseCanonicalRestoreRequest r; r.rank_id = rank; r.rank_epoch = epoch;
+        r.object_id = object_id;
+        return call<ReleaseCanonicalRestoreResponse>(OpCode::kReleaseCanonicalRestore,
+            encode(r), decode_ReleaseCanonicalRestoreResponse);
+    }
 };
 
 struct DaemonFixture {
@@ -529,6 +543,48 @@ static void test_seal_fail_on_missing(DaemonFixture& fx) {
     CHECK(!p.ok);
 }
 
+// --------------------------------------------------------------------------
+// Local canonical restore (trainer offload/reload): a replica that only
+// ATTACHED (no D2H) can restore the shared object by object_id — the daemon
+// returns a valid pinned arena mapping and holds the object resident.
+// --------------------------------------------------------------------------
+static void test_canonical_restore(DaemonFixture& fx) {
+    std::vector<int> f0, f1;
+    RawClient c0(fx.sock_path); auto r0 = c0.register_rank(0, &f0);
+    for (int fd : f0) close_fd(fd);
+    RawClient c1(fx.sock_path); auto r1 = c1.register_rank(1, &f1);
+    for (int fd : f1) close_fd(fd);
+    auto j = c0.register_job("restore_job", 71).job;
+    const uint64_t NB = 1u << 20;
+    auto key = mk_key(j, /*version=*/1, /*param=*/900, 0, -1, NB);
+
+    // rank0 creates; rank1 (same key) attaches with no D2H.
+    auto ev0 = c0.can_evict(mk_evict(0, r0.rank_epoch, key, DEDUP_SEMANTIC_TRUSTED));
+    do_create(c0, 0, r0.rank_epoch, ev0);
+    auto ev1 = c1.can_evict(mk_evict(1, r1.rank_epoch, key, DEDUP_SEMANTIC_TRUSTED));
+    CHECK_EQ(ev1.action, (uint32_t)ATTACH_ACTION_ATTACHED_EXISTING);
+    CHECK_EQ(ev1.object_id, ev0.object_id);
+
+    // The attached replica (rank1) can restore the shared object by object_id.
+    auto rr = c1.can_restore(1, r1.rank_epoch, ev1.object_id);
+    CHECK(rr.ok);
+    CHECK_EQ(rr.object_id, ev0.object_id);
+    CHECK_EQ(rr.nbytes, NB);
+    // A valid pinned arena mapping is returned (offset within the arena).
+    CHECK(rr.arena_offset != 0xFFFFFFFFFFFFFFFFull);
+    CHECK(c1.release_restore(1, r1.rank_epoch, ev1.object_id).ok);
+
+    // The creator can also restore the same object by object_id.
+    auto rr0 = c0.can_restore(0, r0.rank_epoch, ev0.object_id);
+    CHECK(rr0.ok);
+    CHECK_EQ(rr0.nbytes, NB);
+    CHECK(c0.release_restore(0, r0.rank_epoch, ev0.object_id).ok);
+
+    // Restoring an unknown object fails cleanly.
+    auto bad = c0.can_restore(0, r0.rank_epoch, 0xdeadbeef);
+    CHECK(!bad.ok);
+}
+
 }  // namespace
 
 int main() {
@@ -541,6 +597,7 @@ int main() {
         RUN([&]{ test_duplicate_candidate(fx); });
         RUN([&]{ test_seal_and_pull(fx); });
         RUN([&]{ test_seal_fail_on_missing(fx); });
+        RUN([&]{ test_canonical_restore(fx); });
         RUN([&]{ test_pull_over_tcp(fx); });
         RUN([&]{ test_seal_empty_ok_but_pull_rejects_unsealed(fx); });
     }

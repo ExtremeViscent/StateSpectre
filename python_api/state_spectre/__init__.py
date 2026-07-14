@@ -451,9 +451,9 @@ class CanonicalHandle:
     """Result of a canonical evict. Carries the daemon object_id + outcome."""
 
     __slots__ = ("object_id", "action", "action_name", "did_d2h", "attached",
-                 "key", "message")
+                 "key", "message", "_off")
 
-    def __init__(self, object_id, action, did_d2h, key, message):
+    def __init__(self, object_id, action, did_d2h, key, message, off=None):
         self.object_id = int(object_id)
         self.action = int(action)
         self.action_name = _ACTION_NAMES.get(int(action), str(action))
@@ -461,6 +461,26 @@ class CanonicalHandle:
         self.attached = (int(action) == _ACTION_ATTACHED_EXISTING)
         self.key = key
         self.message = message
+        self._off = off
+
+    def restore_into(self, dst: torch.Tensor, stream=None,
+                     wait: bool = True) -> torch.Tensor:
+        """Reload this canonical object's bytes into ``dst`` (in-place H2D).
+
+        The trainer offload/reload read path: reads the one shared canonical
+        copy — addressed purely by ``object_id`` — back into ``dst``'s storage
+        via a direct H2D from the daemon's shared pinned arena. Works even for a
+        replica whose evict returned ATTACHED_EXISTING (no local D2H): every DP
+        replica reloads the same deduplicated bytes. Read-only w.r.t. the
+        object; the daemon holds it resident for the copy.
+
+        ``dst`` must be a contiguous CUDA tensor already sized to the object
+        (e.g. after ``storage().resize_(nbytes)`` for an aliased flat buffer).
+        """
+        if self._off is None:
+            raise RuntimeError("restore_into: handle not bound to a session")
+        self._off._ctx.canonical_restore_into(dst, self.object_id, stream, wait)
+        return dst
 
     def __repr__(self) -> str:
         return (f"CanonicalHandle(object_id={self.object_id}, "
@@ -573,7 +593,8 @@ class Off:
             raise RuntimeError(
                 f"canonical_evict failed (action={_ACTION_NAMES.get(action, action)}): "
                 f"{message}")
-        return CanonicalHandle(object_id, action, did_d2h, canonical_key, message)
+        return CanonicalHandle(object_id, action, did_d2h, canonical_key, message,
+                               off=self)
 
     # ---- v2 seal / promote ----------------------------------------------- #
     def seal_model_version(self, model_role, model_version: int,

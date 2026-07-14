@@ -32,6 +32,10 @@ OFLD_CODEC_V2(GetManifestRequest)
 OFLD_CODEC_V2(GetManifestResponse)
 OFLD_CODEC_V2(PullTensorRequest)
 OFLD_CODEC_V2(PullTensorResponse)
+OFLD_CODEC_V2(RequestCanonicalRestoreRequest)
+OFLD_CODEC_V2(RequestCanonicalRestoreResponse)
+OFLD_CODEC_V2(ReleaseCanonicalRestoreRequest)
+OFLD_CODEC_V2(ReleaseCanonicalRestoreResponse)
 
 #undef OFLD_CODEC_V2
 

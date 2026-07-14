@@ -335,4 +335,53 @@ PullTensorResponse decode_PullTensorResponse(const uint8_t* d, size_t n) {
     return m;
 }
 
+// ---- Local canonical restore ----------------------------------------------
+std::vector<uint8_t> encode(const RequestCanonicalRestoreRequest& m) {
+    std::vector<uint8_t> b; Writer w(b);
+    w.u32(m.rank_id); w.u64(m.rank_epoch); w.u64(m.object_id);
+    w.u32(m.gpu_id); w.u32(m.numa_node);
+    return b;
+}
+RequestCanonicalRestoreRequest decode_RequestCanonicalRestoreRequest(const uint8_t* d, size_t n) {
+    Reader r(d, n); RequestCanonicalRestoreRequest m;
+    m.rank_id = r.u32(); m.rank_epoch = r.u64(); m.object_id = r.u64();
+    m.gpu_id = r.u32(); m.numa_node = r.u32();
+    return m;
+}
+
+std::vector<uint8_t> encode(const RequestCanonicalRestoreResponse& m) {
+    std::vector<uint8_t> b; Writer w(b);
+    w.b(m.ok); w.str(m.message); w.b(m.retriable);
+    w.u64(m.object_id); w.u64(m.nbytes); w.u64(m.arena_id); w.u64(m.arena_offset);
+    return b;
+}
+RequestCanonicalRestoreResponse decode_RequestCanonicalRestoreResponse(const uint8_t* d, size_t n) {
+    Reader r(d, n); RequestCanonicalRestoreResponse m;
+    m.ok = r.b(); m.message = r.str(); m.retriable = r.b();
+    m.object_id = r.u64(); m.nbytes = r.u64(); m.arena_id = r.u64(); m.arena_offset = r.u64();
+    return m;
+}
+
+std::vector<uint8_t> encode(const ReleaseCanonicalRestoreRequest& m) {
+    std::vector<uint8_t> b; Writer w(b);
+    w.u32(m.rank_id); w.u64(m.rank_epoch); w.u64(m.object_id);
+    return b;
+}
+ReleaseCanonicalRestoreRequest decode_ReleaseCanonicalRestoreRequest(const uint8_t* d, size_t n) {
+    Reader r(d, n); ReleaseCanonicalRestoreRequest m;
+    m.rank_id = r.u32(); m.rank_epoch = r.u64(); m.object_id = r.u64();
+    return m;
+}
+
+std::vector<uint8_t> encode(const ReleaseCanonicalRestoreResponse& m) {
+    std::vector<uint8_t> b; Writer w(b);
+    w.b(m.ok); w.str(m.message);
+    return b;
+}
+ReleaseCanonicalRestoreResponse decode_ReleaseCanonicalRestoreResponse(const uint8_t* d, size_t n) {
+    Reader r(d, n); ReleaseCanonicalRestoreResponse m;
+    m.ok = r.b(); m.message = r.str();
+    return m;
+}
+
 }  // namespace offload

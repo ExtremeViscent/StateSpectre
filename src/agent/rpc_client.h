@@ -60,6 +60,10 @@ class RpcClient {
         const GetLatestSealedVersionRequest& req);
     GetManifestResponse            get_manifest(const GetManifestRequest& req);
     PullTensorResponse             pull_tensor(const PullTensorRequest& req);
+    RequestCanonicalRestoreResponse request_canonical_restore(
+        const RequestCanonicalRestoreRequest& req);
+    ReleaseCanonicalRestoreResponse release_canonical_restore(
+        const ReleaseCanonicalRestoreRequest& req);
 
     int sock() const { return sock_; }
 

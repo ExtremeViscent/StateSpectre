@@ -192,6 +192,14 @@ class OffloadAgent {
     GetManifestResponse            get_manifest(const GetManifestRequest& r);
     PullTensorResponse             pull_tensor(const PullTensorRequest& r);
 
+    // Local canonical restore (trainer offload/reload round-trip). Reads a
+    // canonical object's bytes — identified purely by object_id — back into the
+    // provided GPU buffer via a direct H2D from the daemon's shared pinned
+    // arena. Works for a replica that only ATTACHED (never had a local D2H /
+    // tensor_id). Read-only: the daemon holds the object resident for the copy.
+    RestoreResult canonical_restore(uint64_t object_id, uint64_t dev_ptr,
+                                    uint64_t nbytes, StreamHandle stream, bool wait);
+
  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

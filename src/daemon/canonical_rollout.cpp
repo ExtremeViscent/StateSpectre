@@ -404,4 +404,136 @@ PullTensorResponse OffloadDaemon::handle_pull_tensor(const PullTensorRequest& re
     return resp;
 }
 
+// ---------------------------------------------------------------------------
+// RequestCanonicalRestore: make a canonical object readable in a pinned arena
+// and hand back its (arena_id, arena_offset) so the requesting rank can H2D the
+// bytes into its own GPU storage. This is the trainer offload/reload round-trip
+// read path — any rank (including a replica that only ATTACHED, no local D2H)
+// can read the one shared copy back. Strictly read-only: bumps restore_refcount
+// so drain/recycle cannot free the backing during the H2D; never frees or
+// migrates the object here.
+// ---------------------------------------------------------------------------
+RequestCanonicalRestoreResponse OffloadDaemon::handle_request_canonical_restore(
+    const RequestCanonicalRestoreRequest& req) {
+    std::unique_lock<std::mutex> lk(mu_);
+    RequestCanonicalRestoreResponse resp;
+    resp.object_id = req.object_id;
+
+    if (!cfg_.v2_enable_canonical_store) {
+        resp.ok = false; resp.message = "canonical store disabled"; return resp;
+    }
+    if (!epoch_valid(req.rank_id, req.rank_epoch)) {
+        Metrics::instance().inc(Metric::kEpochMismatchRejected);
+        resp.ok = false; resp.message = "epoch invalid"; return resp;
+    }
+    CanonicalObject* obj = find_object(req.object_id);
+    if (!obj) { resp.ok = false; resp.message = "unknown object"; return resp; }
+    const bool valid = (obj->state == OBJ_VALID_PINNED || obj->state == OBJ_VALID_PAGEABLE ||
+                        obj->state == OBJ_VALID_NVME || obj->state == OBJ_VALID_MULTI_TIER ||
+                        obj->state == OBJ_SEALED || obj->state == OBJ_EXPORT_IN_FLIGHT);
+    if (!valid) { resp.ok = false; resp.message = "object not readable"; return resp; }
+
+    const uint64_t syn_tid = canonical_tid(req.object_id);
+    const uint64_t nbytes = obj->nbytes;
+    auto lit = locations_.find(syn_tid);
+    if (lit == locations_.end() || lit->second.kind == OFLD_LOC_NONE ||
+        lit->second.kind == OFLD_LOC_DELETED) {
+        resp.ok = false; resp.message = "object not resident"; return resp;
+    }
+
+    uint32_t base_slot = 0xFFFFFFFFu;
+    if (lit->second.kind == OFLD_LOC_PINNED &&
+        slot_state(lit->second.slot_id) == OFLD_SLOT_PINNED_VALID) {
+        // Already pinned — read straight from the resident slot.
+        base_slot = lit->second.slot_id;
+    } else if (lit->second.kind == OFLD_LOC_PAGEABLE ||
+               lit->second.kind == OFLD_LOC_NVME) {
+        // Cold (pageable/NVMe): warm it back into a pinned slot. The warmed copy
+        // becomes the object's pinned residency (multi-tier: cold_ref is kept),
+        // so subsequent restores are warm.
+        if (lit->second.cold_ref == 0 ||
+            cold_store_.find(lit->second.cold_ref) == cold_store_.end()) {
+            // Cold reference not yet settled (drain still finalizing) — retry.
+            resp.ok = false; resp.retriable = true;
+            resp.message = "object cold reference not ready";
+            return resp;
+        }
+        ColdEntry cold = cold_store_[lit->second.cold_ref];
+        uint32_t base = 0xFFFFFFFFu, count = 0;
+        bool blocked = false, got = false;
+        for (int attempt = 0; attempt <= 64; ++attempt) {
+            if (allocate_slots(req.gpu_id, req.numa_node, nbytes,
+                               OFLD_FLAG_ALLOW_OVERFLOW, /*for_prefetch=*/true,
+                               &base, &count, &blocked)) { got = true; break; }
+            if (!force_drain_one(lk)) break;
+        }
+        if (!got) {
+            resp.ok = false; resp.message = "no pinned capacity to warm object";
+            return resp;
+        }
+        // Bind the run to the object (synthetic tid) and read the cold bytes in.
+        uint64_t owner_pid = sessions_[req.rank_id].pid;
+        for (uint32_t k = 0; k < count; ++k) {
+            ofld_slot_entry_t& e = slots_[base + k];
+            e.tensor_id = syn_tid; e.version = obj->version;
+            e.owner_rank = req.rank_id; e.owner_pid = owner_pid;
+            e.rank_epoch = req.rank_epoch;
+            e.nbytes = (k == 0) ? nbytes : e.capacity;
+            set_slot_state(base + k, OFLD_SLOT_READBACK_IN_FLIGHT);
+        }
+        lk.unlock();
+        bool rok = do_readback_from_cold(base, count, cold, nbytes);
+        lk.lock();
+        if (!rok) {
+            for (uint32_t k = 0; k < count; ++k) set_slot_state(base + k, OFLD_SLOT_ERROR);
+            free_slots(base, count);
+            Metrics::instance().inc(Metric::kIoFailure);
+            resp.ok = false; resp.message = "readback failed"; return resp;
+        }
+        for (uint32_t k = 0; k < count; ++k) set_slot_state(base + k, OFLD_SLOT_PINNED_VALID);
+        Metrics::instance().add(Metric::kUsedPinnedBytes,
+                                static_cast<uint64_t>(count) *
+                                    cfg_.allocation_granularity_bytes);
+        // Warmed copy is now the object's pinned residency (keep cold_ref → multi-tier).
+        auto& loc = locations_[syn_tid];
+        loc.kind = OFLD_LOC_PINNED; loc.slot_id = base; loc.nbytes = nbytes;
+        obj->base_slot = base; obj->slot_count = count;
+        obj->state = OBJ_VALID_MULTI_TIER;
+        base_slot = base;
+    } else {
+        // kind==PINNED but slot not PINNED_VALID → the object is mid-transition
+        // (drain/readback in flight). Ask the caller to retry shortly.
+        resp.ok = false; resp.retriable = true;
+        resp.message = "object transitioning between tiers";
+        return resp;
+    }
+
+    // Hold the object resident for the H2D window (read-only guard).
+    obj->restore_refcount++;
+    obj->last_access_ns = now_real_ns();
+    Metrics::instance().inc(Metric::kCanonicalRestoreServed);
+
+    resp.ok = true;
+    resp.message = "ok";
+    resp.nbytes = nbytes;
+    resp.arena_id = slots_[base_slot].arena_id;
+    resp.arena_offset = slots_[base_slot].arena_offset;
+    return resp;
+}
+
+ReleaseCanonicalRestoreResponse OffloadDaemon::handle_release_canonical_restore(
+    const ReleaseCanonicalRestoreRequest& req) {
+    std::lock_guard<std::mutex> lk(mu_);
+    ReleaseCanonicalRestoreResponse resp;
+    if (!epoch_valid(req.rank_id, req.rank_epoch)) {
+        Metrics::instance().inc(Metric::kEpochMismatchRejected);
+        resp.ok = false; resp.message = "epoch invalid"; return resp;
+    }
+    CanonicalObject* obj = find_object(req.object_id);
+    if (obj && obj->restore_refcount > 0) obj->restore_refcount--;
+    resp.ok = true;
+    resp.message = "ok";
+    return resp;
+}
+
 }  // namespace offload

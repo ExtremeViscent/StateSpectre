@@ -47,6 +47,7 @@ const char* metric_name(Metric m) {
         case Metric::kCanonicalD2HBytesAvoided: return "canonical_d2h_bytes_avoided";
         case Metric::kCanonicalHashMismatch: return "canonical_hash_mismatch_total";
         case Metric::kCanonicalStaleVersionReject: return "canonical_stale_version_reject_total";
+        case Metric::kCanonicalRestoreServed: return "canonical_restore_served_total";
         case Metric::kQuotaRejections: return "quota_rejections";
         case Metric::kManifestSealed: return "manifest_sealed_total";
         case Metric::kManifestSealFailed: return "manifest_seal_failed_total";
