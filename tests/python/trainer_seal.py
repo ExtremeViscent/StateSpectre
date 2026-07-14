@@ -14,7 +14,7 @@ import sys
 import time
 import torch
 
-import fastoffload as fo
+import state_spectre as ss
 
 SCHED = None
 
@@ -31,7 +31,7 @@ def main():
     tensors = {name: torch.randn(*shape, device="cuda:0", dtype=torch.float32)
                for name, shape in specs}
 
-    with fo.offload_context(daemon_addr=f"unix://{sock}", device="cuda:0", rank=0,
+    with ss.offload_context(daemon_addr=f"unix://{sock}", device="cuda:0", rank=0,
                             job_name="lf_xnode_job", scheduler_job_id=sched_id) as off:
         print(f"[trainer] job_id={off.job_id} launch_epoch={off.launch_epoch}",
               flush=True)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end Python test of the fastoffload runtime against a live daemon.
+"""End-to-end Python test of the state_spectre runtime against a live daemon.
 
 Mirrors the examples in python_api/PYTHON_API.md:
   - single-tensor destructive evict + restore, byte-identical
@@ -16,7 +16,7 @@ Usage: python test_python_e2e.py <socket_path>
 """
 import sys
 import torch
-import fastoffload as fo
+import state_spectre as ss
 
 
 def approx_free_mb():
@@ -25,7 +25,7 @@ def approx_free_mb():
 
 
 def main():
-    socket_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/fastoffload.sock"
+    socket_path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/state_spectre.sock"
     device = "cuda:0"
     torch.cuda.init()
     torch.cuda.set_device(0)
@@ -38,7 +38,7 @@ def main():
             failures += 1
         print(f"  [{status}] {msg}")
 
-    with fo.offload_context(
+    with ss.offload_context(
         daemon_addr=f"unix://{socket_path}",
         device=device,
         rank=0,

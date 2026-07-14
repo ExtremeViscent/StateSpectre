@@ -34,8 +34,8 @@ struct NumaArenaConfig {
 
 struct DaemonConfig {
     // daemon:
-    std::string socket_path = "/tmp/fastoffload.sock";
-    std::string control_shm_name = "/fastoffload_ctrl";
+    std::string socket_path = "/tmp/state_spectre.sock";
+    std::string control_shm_name = "/state_spectre_ctrl";
     uint64_t heartbeat_timeout_ms = 5000;
 
     // arenas:
@@ -53,7 +53,7 @@ struct DaemonConfig {
 
     // nvme:
     bool nvme_enabled = true;
-    std::string nvme_path = "/nvme/fastoffload";
+    std::string nvme_path = "/nvme/state_spectre";
     std::string nvme_io_engine = "io_uring";           // io_uring | pwrite
     bool nvme_direct_io = true;
     bool nvme_stripe = true;

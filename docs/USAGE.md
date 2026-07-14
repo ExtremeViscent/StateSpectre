@@ -27,7 +27,7 @@ Produces `offloadd` (daemon), `offload-stat` (metrics CLI), `offload_bench`
 # Python extension — built by torch's cpp_extension to match the libtorch ABI
 cd python_api
 python setup.py build_ext --inplace
-python -c "import torch, fastoffload; print('ok')"
+python -c "import torch, state_spectre; print('ok')"
 ```
 
 Optional libfabric/RDMA export backend:
@@ -40,7 +40,7 @@ cmake .. -DOFLD_WITH_LIBFABRIC=ON -DNORTH_COMM_DIR=/path/to/north_comm
 
 ```bash
 # Smoke config: one NUMA arena on node 0 for GPU 0.
-./build/offloadd --smoke-arena-mb 8192 --numa 0 --gpu 0 --socket /tmp/fastoffload.sock
+./build/offloadd --smoke-arena-mb 8192 --numa 0 --gpu 0 --socket /tmp/state_spectre.sock
 
 # Production config (all keys documented in config/config.production.yaml):
 ./build/offloadd --config config/config.production.yaml
@@ -62,9 +62,9 @@ Environment:
 ## Python API — tensor offload
 
 ```python
-import torch, fastoffload as fo
+import torch, state_spectre as fo
 
-with fo.offload_context(daemon_addr="unix:///tmp/fastoffload.sock",
+with ss.offload_context(daemon_addr="unix:///tmp/state_spectre.sock",
                         device="cuda:0", rank=0) as off:
     x = torch.randn(1024, 1024, device="cuda")
     h = off.evict(x, name="x")        # destructive: frees VRAM after D2H completes
@@ -86,12 +86,12 @@ with fo.offload_context(daemon_addr="unix:///tmp/fastoffload.sock",
 ## Python API — canonical model-state (RL post-training)
 
 ```python
-import fastoffload as fo
+import state_spectre as ss
 
 # Trainer: job-aware context, canonical evict, seal + promote a rollout version.
-with fo.offload_context(daemon_addr="unix:///tmp/fastoffload.sock", device="cuda:0",
+with ss.offload_context(daemon_addr="unix:///tmp/state_spectre.sock", device="cuda:0",
                         job_name="qwen32b_grpo", scheduler_job_id=SLURM_JOB_ID,
-                        dedup_policy=fo.DedupPolicy(mode="semantic_trusted")) as off:
+                        dedup_policy=ss.DedupPolicy(mode="semantic_trusted")) as off:
     for name, w in named_weights:                      # e.g. HF-named tensors
         key = off.canonical_key(model_role="policy_rollout", model_version=step,
                                 param_name=name, tensor=w,
@@ -102,7 +102,7 @@ with fo.offload_context(daemon_addr="unix:///tmp/fastoffload.sock", device="cuda
 
 ```python
 # Rollout / inference engine (may be remote), over the daemon's TCP control port.
-client = fo.RolloutWeightClient(daemon_addr="tcp://trainer-node:19090",
+client = ss.RolloutWeightClient(daemon_addr="tcp://trainer-node:19090",
                                 job_id=job_id, launch_epoch=launch_epoch,
                                 model_role="policy_rollout")
 version  = client.get_latest_sealed_version()
@@ -121,7 +121,7 @@ device pointers are `uint64_t`, streams are `uintptr_t` (0 = CUDA default
 stream, `kInternalStream` = the agent's internal stream):
 
 ```cpp
-AgentConfig cfg; cfg.socket_path = "/tmp/fastoffload.sock"; cfg.cuda_device = 0;
+AgentConfig cfg; cfg.socket_path = "/tmp/state_spectre.sock"; cfg.cuda_device = 0;
 OffloadAgent agent(cfg);
 TensorMeta m{.tensor_id=1, .version=1, .nbytes=nbytes};
 agent.evict(dev_ptr, nbytes, /*stream=*/0, /*destructive=*/true, m, cb, cookie, /*wait=*/true);
@@ -163,10 +163,10 @@ quotas:
 ## Observability
 
 ```bash
-./build/offload-stat --socket /tmp/fastoffload.sock            # human table
-./build/offload-stat --socket /tmp/fastoffload.sock --prometheus
-./build/offload-stat --socket /tmp/fastoffload.sock --watch 2  # refresh every 2s
-./build/offload-stat --socket /tmp/fastoffload.sock --shutdown # ask daemon to exit
+./build/offload-stat --socket /tmp/state_spectre.sock            # human table
+./build/offload-stat --socket /tmp/state_spectre.sock --prometheus
+./build/offload-stat --socket /tmp/state_spectre.sock --watch 2  # refresh every 2s
+./build/offload-stat --socket /tmp/state_spectre.sock --shutdown # ask daemon to exit
 ```
 
 Metrics cover bytes per tier, in-flight/draining bytes, D2H/H2D bandwidth
@@ -198,7 +198,7 @@ src/         implementation — common / daemon / agent / python / tools
 abi/         shared-memory ABI headers (v1 + canonical v2)
 rpc/         *.proto — wire-protocol schema of record (not linked)
 config/      example + production + canonical-store overlay YAML
-python_api/  fastoffload package, setup.py, API docs
+python_api/  state_spectre package, setup.py, API docs
 tests/       cpp + python tests, TEST_PLAN(_V2), METRICS, BENCHMARKS
 docs/        ARCHITECTURE, USAGE, PERFORMANCE + docs/design references
 ```

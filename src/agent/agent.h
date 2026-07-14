@@ -42,7 +42,7 @@ static constexpr StreamHandle kInternalStream = ~static_cast<StreamHandle>(0);
 using InvalidateCallback = std::function<void(uint64_t cookie)>;
 
 struct AgentConfig {
-    std::string socket_path = "/tmp/fastoffload.sock";
+    std::string socket_path = "/tmp/state_spectre.sock";
     int cuda_device = 0;         // local CUDA device index this rank drives
     uint32_t rank_id = 0;
     uint32_t local_rank = 0;

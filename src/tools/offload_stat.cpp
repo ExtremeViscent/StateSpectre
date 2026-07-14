@@ -30,7 +30,7 @@ using namespace offload;
 
 namespace {
 
-constexpr const char* kDefaultSocket = "/tmp/fastoffload.sock";
+constexpr const char* kDefaultSocket = "/tmp/state_spectre.sock";
 
 // Set by SIGINT/SIGTERM so the --watch loop can exit cleanly between iterations.
 volatile std::sig_atomic_t g_stop = 0;

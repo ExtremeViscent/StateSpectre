@@ -1,4 +1,4 @@
-"""Build the fastoffload C++ extension (`fastoffload._fastoffload`).
+"""Build the state_spectre C++ extension (`state_spectre._state_spectre`).
 
 The extension links the CUDA/torch-free OffloadAgent + common transport TUs
 directly into a single libtorch-linked shared object. We deliberately use
@@ -10,7 +10,7 @@ TU that includes torch/pybind; torch/extension.h pulls in pybind11.
 Build:
     cd python_api && python setup.py build_ext --inplace
 Verify:
-    cd python_api && python -c "import torch; import fastoffload; print('import OK')"
+    cd python_api && python -c "import torch; import state_spectre; print('import OK')"
 """
 
 import os
@@ -27,7 +27,7 @@ ABI = os.path.join(ROOT, "abi")
 CUDA_HOME = os.environ.get("CUDA_HOME", "/usr/local/cuda")
 
 # All TUs compiled into the extension. The agent + common + rpc_client objects
-# must be present or `import fastoffload` fails with undefined symbols.
+# must be present or `import state_spectre` fails with undefined symbols.
 sources = [
     os.path.join(SRC, "python", "bindings.cpp"),
     os.path.join(SRC, "agent", "agent.cpp"),
@@ -63,7 +63,7 @@ abi_flag = "-D_GLIBCXX_USE_CXX11_ABI=1" if torch._C._GLIBCXX_USE_CXX11_ABI \
 extra_compile_args = ["-std=c++17", "-O2", "-fvisibility=hidden", abi_flag]
 
 ext = CppExtension(
-    name="fastoffload._fastoffload",
+    name="state_spectre._state_spectre",
     sources=sources,
     include_dirs=include_dirs,
     library_dirs=library_dirs,
@@ -76,10 +76,10 @@ ext = CppExtension(
 )
 
 setup(
-    name="fastoffload",
+    name="state_spectre",
     version="0.1.0",
     description="Centralized GPU tensor-offload runtime (Python user API)",
-    packages=["fastoffload"],
+    packages=["state_spectre"],
     ext_modules=[ext],
     cmdclass={"build_ext": BuildExtension},
     python_requires=">=3.9",

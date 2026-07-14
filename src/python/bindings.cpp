@@ -1,4 +1,4 @@
-// pybind11 module `_fastoffload`: the C++ shim that bridges torch::Tensor <->
+// pybind11 module `_state_spectre`: the C++ shim that bridges torch::Tensor <->
 // the CUDA/torch-free offload::OffloadAgent (see src/agent/agent.h).
 //
 // Architecture boundary (do NOT violate): agent.h speaks in raw uint64_t device
@@ -487,8 +487,8 @@ class Context {
 
 }  // namespace
 
-PYBIND11_MODULE(_fastoffload, m) {
-    m.doc() = "fastoffload C++ shim: torch::Tensor <-> offload::OffloadAgent";
+PYBIND11_MODULE(_state_spectre, m) {
+    m.doc() = "state_spectre C++ shim: torch::Tensor <-> offload::OffloadAgent";
 
     py::class_<Context>(m, "Context")
         .def(py::init<std::string, int, int, int, int, int, std::uint64_t, bool>(),

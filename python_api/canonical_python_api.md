@@ -9,10 +9,10 @@ Keep the v1 Python interface usable for arbitrary tensor offload, while adding c
 The offload context must now be job-aware.
 
 ```python
-import fastoffload as fo
+import state_spectre as ss
 
-with fo.offload_context(
-    daemon_addr="unix:///tmp/fo.sock",
+with ss.offload_context(
+    daemon_addr="unix:///tmp/ss.sock",
     device="cuda:0",
     job_name="qwen32b_grpo_math",
     tenant_id=0,
@@ -89,7 +89,7 @@ DUPLICATE_CANDIDATE:
 ## Dedup Policy
 
 ```python
-fo.DedupPolicy(
+ss.DedupPolicy(
     mode="semantic_trusted",       # disabled | semantic_trusted | hash_verified | sampled_hash
     creating_policy="wait",        # wait | duplicate_candidate_on_pressure
     cross_job_dedup=False,
@@ -99,7 +99,7 @@ fo.DedupPolicy(
 Attach to context:
 
 ```python
-with fo.offload_context(..., dedup_policy=policy) as off:
+with ss.offload_context(..., dedup_policy=policy) as off:
     ...
 ```
 
@@ -137,7 +137,7 @@ atomically set latest sealed rollout pointer to step
 A rollout engine can use:
 
 ```python
-client = fo.RolloutWeightClient(
+client = ss.RolloutWeightClient(
     daemon_addr="tcp://trainer-node:19090",
     job_id=job_id,
     launch_epoch=launch_epoch,

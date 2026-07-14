@@ -25,7 +25,7 @@ run_python() {
     echo "==> Building python extension"
     (cd "$ROOT/python_api" && python setup.py build_ext --inplace >/dev/null 2>&1)
     echo "==> Running python end-to-end test against a live daemon"
-    local sock="/tmp/fastoffload_runtests_$$.sock"
+    local sock="/tmp/state_spectre_runtests_$$.sock"
     local tcp_port=$(( 19000 + (RANDOM % 800) ))
     rm -f "$sock"
     OFLD_LOG_LEVEL=1 "$BUILD/offloadd" --smoke-arena-mb 8192 --numa 0 --gpu "$GPU" \

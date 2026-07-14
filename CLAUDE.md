@@ -3,7 +3,7 @@
 Centralized GPU offload + canonical model-state runtime. One node-level daemon
 (`offloadd`, CUDA-free) owns pinned host arenas, NVMe spill, leases, and the
 canonical object/manifest store; training ranks attach through the C++
-`OffloadAgent` and the `fastoffload` Python package (which owns all CUDA).
+`OffloadAgent` and the `state_spectre` Python package (which owns all CUDA).
 
 This file orients a developer (or agent) working in this repo. Read
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design; this is the
@@ -20,7 +20,7 @@ src/daemon/     offloadd: arenas, slot allocator, leases, location table, cold
 src/agent/      OffloadAgent: the rank-side CUDA owner + synchronous RPC client
 src/python/     bindings.cpp — the ONLY translation unit that knows torch::Tensor
 src/tools/      offload-stat (metrics CLI)
-python_api/     fastoffload package (ergonomic layer) + setup.py + API docs
+python_api/     state_spectre package (ergonomic layer) + setup.py + API docs
 abi/            offload_abi.h (v1 shared-memory ABI) + offload_canonical_abi.hpp (v2)
 rpc/            *.proto — schema of record for the wire protocol (not linked)
 config/         config.example.yaml, config.production.yaml, offload_manager_v2.yaml

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Representative LLM-style integration test for the fastoffload runtime.
+"""Representative LLM-style integration test for the state_spectre runtime.
 
 This simulates the memory-offload pattern of transformer inference/training:
 per-layer weights and a growing KV cache are offloaded from VRAM to host/NVMe
@@ -30,7 +30,7 @@ import time
 
 import torch
 
-import fastoffload as fo
+import state_spectre as ss
 
 
 # --------------------------------------------------------------------------- #
@@ -95,7 +95,7 @@ def _find_daemon() -> str:
 def _spawn_daemon():
     """Start build/offloadd on a fresh socket; return (proc, socket_path)."""
     binary = _find_daemon()
-    sock = tempfile.mktemp(prefix="fastoffload_llm_", suffix=".sock")
+    sock = tempfile.mktemp(prefix="state_spectre_llm_", suffix=".sock")
     if os.path.exists(sock):
         os.unlink(sock)
     env = dict(os.environ)
@@ -145,7 +145,7 @@ def run(socket_path: str) -> int:
           f"bf16), KV_STEPS={KV_STEPS}, total weights "
           f"{mb(layer_bytes * LAYERS):.1f} MiB")
 
-    with fo.offload_context(
+    with ss.offload_context(
         daemon_addr=f"unix://{socket_path}",
         device=DEVICE,
         rank=0,
@@ -395,7 +395,7 @@ def main() -> int:
             except Exception:
                 pass
     else:
-        sock = args[0] if args else "/tmp/fastoffload.sock"
+        sock = args[0] if args else "/tmp/state_spectre.sock"
         return run(sock)
 
 

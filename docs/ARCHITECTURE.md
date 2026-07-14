@@ -8,7 +8,7 @@ describes the whole system as it runs; deeper design references live in
                        ┌──────────────────────────────────────────────────┐
    rank process 0      │              offloadd  (CUDA-free)                 │
  ┌────────────────────┐│  ┌──────────────────────────────────────────────┐ │
- │ fastoffload (Python)││  │ per-NUMA pinned arenas (memfd + mbind)         │ │
+ │ state_spectre (Python)││  │ per-NUMA pinned arenas (memfd + mbind)         │ │
  │  off.evict/restore  ││  │ slot allocator (per-GPU windows + overflow)    │ │
  │  canonical_evict    ││  │ lease / location / session tables              │ │
  │  ↕ pybind11         ││  │ canonical object + manifest store (v2)         │ │
@@ -133,7 +133,7 @@ content-hash cache so unchanged tensors are not re-pulled. See
 
 ## Interfaces
 
-- **Python** (`fastoffload`): `offload_context()`, `off.evict/copy/restore`,
+- **Python** (`state_spectre`): `offload_context()`, `off.evict/copy/restore`,
   `evict_many/restore_many`, and the canonical layer `canonical_key`,
   `canonical_evict`, `DedupPolicy`, `seal_model_version` /
   `promote_rollout_version`, `RolloutWeightClient`. See

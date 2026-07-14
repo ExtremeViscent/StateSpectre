@@ -1,12 +1,12 @@
-"""fastoffload — centralized GPU tensor-offload runtime, Python user API.
+"""state_spectre — centralized GPU tensor-offload runtime, Python user API.
 
-This package is the ergonomic layer over the ``_fastoffload`` C++ extension
+This package is the ergonomic layer over the ``_state_spectre`` C++ extension
 (pybind11 + libtorch). All heavy lifting — D2H/H2D copies, cudaHostRegister,
 CUDA events, daemon RPC, and the destructive storage replacement — happens in
 the C++ ``OffloadAgent`` reached through the ``Context`` shim. This module only
 provides the surface described in ``python_api/PYTHON_API.md``:
 
-    with fo.offload_context(device="cuda:0") as off:
+    with ss.offload_context(device="cuda:0") as off:
         h = off.evict(x, name="x")
         h.wait_offloaded()
         x = h.restore(device="cuda:0")
@@ -20,7 +20,7 @@ from typing import Iterable, List, Optional, Sequence, Union
 
 import torch
 
-from . import _fastoffload  # C++ extension (pybind11 module)
+from . import _state_spectre  # C++ extension (pybind11 module)
 
 __all__ = [
     "offload_context",
@@ -161,7 +161,7 @@ def _dtype_from_int(scalar_int: int) -> torch.dtype:
     # tensor at evict time, so it *will* be in the map by the time restore runs
     # for that tensor. If somehow not, raise a clear error.
     raise RuntimeError(
-        f"fastoffload: unknown scalar type id {scalar_int}; cannot reconstruct "
+        f"state_spectre: unknown scalar type id {scalar_int}; cannot reconstruct "
         f"torch.dtype for restore"
     )
 
@@ -175,7 +175,7 @@ def _parse_device_index(device: Union[str, int, torch.device, None],
         return device
     dev = torch.device(device)
     if dev.type != "cuda":
-        raise ValueError(f"fastoffload: device must be a CUDA device, got {dev}")
+        raise ValueError(f"state_spectre: device must be a CUDA device, got {dev}")
     return dev.index if dev.index is not None else default
 
 
@@ -473,7 +473,7 @@ class CanonicalHandle:
 class Off:
     """User-facing session handle. Wraps a C++ ``Context`` (one OffloadAgent)."""
 
-    def __init__(self, ctx: "_fastoffload.Context", device_index: int):
+    def __init__(self, ctx: "_state_spectre.Context", device_index: int):
         self._ctx = ctx
         self._device_index = device_index
         self._unsafe_default = False  # toggled by unsafe_destructive_mode()
@@ -789,7 +789,7 @@ class Off:
 # offload_context — the session context manager
 # --------------------------------------------------------------------------- #
 @contextlib.contextmanager
-def offload_context(daemon_addr: str = "unix:///tmp/fastoffload.sock",
+def offload_context(daemon_addr: str = "unix:///tmp/state_spectre.sock",
                     device: Union[str, int, torch.device] = "cuda:0",
                     rank: int = 0, local_rank: int = 0, world_rank: int = 0,
                     numa_node: int = -1,
@@ -821,7 +821,7 @@ def offload_context(daemon_addr: str = "unix:///tmp/fastoffload.sock",
     eager = eager_register or (register_policy in ("eager", "eager_all"))
     chunk_bytes = int(registration_chunk_mb) * (1 << 20)
 
-    ctx = _fastoffload.Context(
+    ctx = _state_spectre.Context(
         socket_path, device_index, int(rank), int(local_rank), int(world_rank),
         int(numa_node), int(chunk_bytes), bool(eager),
     )

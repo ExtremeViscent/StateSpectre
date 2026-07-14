@@ -13,7 +13,7 @@ WORKDIR="$1"; TCP_PORT="$2"; SCHED="$3"; VERSION="$4"
 # NIC the daemon's libfabric sender opens locally (its own device). Override per
 # node; mlx5_8 is the GPU-affinity RDMA domain north_comm accepts on these hosts.
 export OFLD_LIBFABRIC_NIC="${OFLD_LIBFABRIC_NIC:-mlx5_bond_1}"
-SOCK="$WORKDIR/fo.sock"
+SOCK="$WORKDIR/daemon.sock"
 rm -rf "$WORKDIR"; mkdir -p "$WORKDIR"
 
 OFLD_LOG_LEVEL=2 "$PACK/build_lf/offloadd" --smoke-arena-mb 2048 --numa 0 --gpu 0 \

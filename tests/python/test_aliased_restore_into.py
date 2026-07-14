@@ -12,14 +12,14 @@ Usage: python test_aliased_restore_into.py <unix_sock>
 
 import sys
 import torch
-import fastoffload as fo
+import state_spectre as ss
 
 
 def main():
-    sock = sys.argv[1] if len(sys.argv) > 1 else "/tmp/fastoffload.sock"
+    sock = sys.argv[1] if len(sys.argv) > 1 else "/tmp/state_spectre.sock"
     dev = "cuda:0"
 
-    with fo.offload_context(daemon_addr=f"unix://{sock}", device=dev, rank=0) as off:
+    with ss.offload_context(daemon_addr=f"unix://{sock}", device=dev, rank=0) as off:
         # A flat buffer with two aliasing views into its storage (the shape of
         # Megatron DDP buffer.param_data + its per-param views).
         flat = torch.arange(4096, device=dev, dtype=torch.float32)  # 16 KiB

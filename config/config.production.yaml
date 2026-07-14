@@ -9,8 +9,8 @@
 #     fastest drain engine in-system).
 
 daemon:
-  socket_path: /tmp/fastoffload.sock
-  control_shm_name: /fastoffload_ctrl
+  socket_path: /tmp/state_spectre.sock
+  control_shm_name: /state_spectre_ctrl
   heartbeat_timeout_ms: 5000
   # Shared-memory completion rings (removes the RPC syscall from the completion
   # hot path). One ring per rank; capacity is entries (power of two).
@@ -57,7 +57,7 @@ drain_policy:
 
 nvme:
   enabled: true
-  path: /nvme/fastoffload         # base dir (used when stripe_dirs is empty)
+  path: /nvme/state_spectre         # base dir (used when stripe_dirs is empty)
   io_engine: io_uring             # io_uring | pwrite
   direct_io: true                 # O_DIRECT (recommended for large sequential)
   stripe: true
@@ -66,8 +66,8 @@ nvme:
   queue_depth: 16                 # io_uring in-flight blocks per drain
   # Point one directory per physical NVMe so stripes land on different drives:
   stripe_dirs:
-    - /nvme0/fastoffload
-    - /nvme1/fastoffload
+    - /nvme0/state_spectre
+    - /nvme1/state_spectre
 
 python_api:
   default_invalidate: set_empty

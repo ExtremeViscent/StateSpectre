@@ -9,7 +9,7 @@ store** that rollout/inference engines pull sealed weights from over RDMA.
 
 One node-level daemon (`offloadd`) owns the memory and the metadata; every
 training rank attaches to it through a thin agent and a Python package
-(`fastoffload`). The daemon is CUDA-free; ranks own all CUDA.
+(`state_spectre`). The daemon is CUDA-free; ranks own all CUDA.
 
 ---
 
@@ -38,7 +38,7 @@ Three recurring costs in large training / RL jobs, one runtime:
 ```
   training rank 0..N                          offloadd  (one per node, CUDA-free)
  ┌───────────────────────┐                   ┌────────────────────────────────────┐
- │ fastoffload (Python)  │   AF_UNIX (RPC,    │ per-NUMA pinned arenas (memfd+mbind)│
+ │ state_spectre (Python)  │   AF_UNIX (RPC,    │ per-NUMA pinned arenas (memfd+mbind)│
  │   off.evict / restore │   SCM_RIGHTS fds)  │ slot allocator · leases · locations │
  │   canonical_evict     │◀──────────────────▶│ canonical object + manifest store   │
  │ OffloadAgent (C++)    │   + shared control │ drain/readback workers · NVMe engine│
@@ -60,13 +60,13 @@ mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(npro
 cd ../python_api && python setup.py build_ext --inplace
 
 # Run the daemon (smoke config: one arena on NUMA 0 for GPU 0).
-../build/offloadd --smoke-arena-mb 8192 --numa 0 --gpu 0 --socket /tmp/fastoffload.sock
+../build/offloadd --smoke-arena-mb 8192 --numa 0 --gpu 0 --socket /tmp/state_spectre.sock
 ```
 
 ```python
-import torch, fastoffload as fo
+import torch, state_spectre as ss
 
-with fo.offload_context(daemon_addr="unix:///tmp/fastoffload.sock", device="cuda:0") as off:
+with ss.offload_context(daemon_addr="unix:///tmp/state_spectre.sock", device="cuda:0") as off:
     x = torch.randn(8192, 8192, device="cuda")
     h = off.evict(x)          # frees VRAM once the D2H event completes
     x = h.restore()           # byte-identical
@@ -76,14 +76,14 @@ RL post-training weight sync (trainer seals a version; rollout pulls it):
 
 ```python
 # Trainer
-with fo.offload_context(..., job_name="qwen32b_grpo") as off:
+with ss.offload_context(..., job_name="qwen32b_grpo") as off:
     key = off.canonical_key(model_role="policy_rollout", model_version=step,
                             param_name=name, tensor=w)   # dp axis excluded → replicas dedup
     off.canonical_evict(w, key)
     off.promote_rollout_version(step)                    # seal + publish
 
 # Rollout engine (remote)
-client = fo.RolloutWeightClient(daemon_addr="tcp://trainer:19090",
+client = ss.RolloutWeightClient(daemon_addr="tcp://trainer:19090",
                                 job_id=job_id, launch_epoch=epoch)
 for entry in client.diff_local(client.get_manifest(client.get_latest_sealed_version())):
     client.pull_tensor(entry, version, transport="libfabric")

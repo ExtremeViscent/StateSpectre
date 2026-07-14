@@ -1,8 +1,8 @@
 """Rollout-side libfabric receiver for cross-node PullTensor validation.
 
 Runs under the `bprl` conda env (Python 3.12) where `north_comm` imports.
-Pure-Python: imports fastoffload._wire directly by path (no torch / no
-_fastoffload C extension needed on this side).
+Pure-Python: imports state_spectre._wire directly by path (no torch / no
+_state_spectre C extension needed on this side).
 
 Flow (rollout engine side):
   1. stand up a north_comm listener on the given NIC; capture its IB address.
@@ -23,11 +23,11 @@ import socket
 import sys
 import threading
 
-# Import fastoffload._wire by file path (avoids the package __init__ which pulls
-# the torch/_fastoffload C extension not available in this env).
+# Import state_spectre._wire by file path (avoids the package __init__ which pulls
+# the torch/_state_spectre C extension not available in this env).
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _WIRE_PATH = os.path.join(_HERE, os.pardir, os.pardir, "python_api",
-                          "fastoffload", "_wire.py")
+                          "state_spectre", "_wire.py")
 _spec = importlib.util.spec_from_file_location("_ofld_wire", _WIRE_PATH)
 _wire = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_wire)

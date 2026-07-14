@@ -1,6 +1,6 @@
 daemon:
-  socket_path: /tmp/fastoffload.sock
-  control_shm_name: /fastoffload_ctrl
+  socket_path: /tmp/state_spectre.sock
+  control_shm_name: /state_spectre_ctrl
   heartbeat_timeout_ms: 5000
 
 arenas:
@@ -42,7 +42,7 @@ drain_policy:
 
 nvme:
   enabled: true
-  path: /nvme/fastoffload
+  path: /nvme/state_spectre
   io_engine: io_uring
   direct_io: true
   stripe: true

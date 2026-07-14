@@ -17,10 +17,10 @@ The user/runtime guarantees that the original tensor is not accessed after destr
 The context manager manages the runtime session, not tensor creation.
 
 ```python
-import fastoffload as fo
+import state_spectre as ss
 
-with fo.offload_context(
-    daemon_addr="unix:///tmp/fastoffload.sock",
+with ss.offload_context(
+    daemon_addr="unix:///tmp/state_spectre.sock",
     device="cuda:0",
     rank=local_rank,
     register_policy="lazy_chunked",
@@ -209,7 +209,7 @@ remote-NUMA allocation count
 ### Single tensor
 
 ```python
-with fo.offload_context(device="cuda:0") as off:
+with ss.offload_context(device="cuda:0") as off:
     x = torch.empty((1024, 1024), device="cuda", dtype=torch.bfloat16)
     h = off.evict(x, name="x")
     h.wait_offloaded()
@@ -219,7 +219,7 @@ with fo.offload_context(device="cuda:0") as off:
 ### Multiple tensors
 
 ```python
-with fo.offload_context(device="cuda:0") as off:
+with ss.offload_context(device="cuda:0") as off:
     handles = off.evict_many([k_cache, v_cache], names=["k", "v"])
     off.wait(handles)
     k_cache, v_cache = off.restore_many(handles, device="cuda:0")

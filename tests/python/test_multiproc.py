@@ -7,7 +7,7 @@ Proves (RACE_CONDITIONS §4, Milestone 3):
   - every process's restore is byte-identical (no cross-process corruption)
   - distinct rank_ids get distinct sessions/epochs
 
-Each worker is a fresh process (torch + fastoffload imported independently), so
+Each worker is a fresh process (torch + state_spectre imported independently), so
 this exercises the real fd-passing + mmap + lease path per process.
 
 Usage: python test_multiproc.py <socket_path> [nprocs] [ntensors]
@@ -16,18 +16,18 @@ import os
 import sys
 import multiprocessing as mp
 
-SOCKET = sys.argv[1] if len(sys.argv) > 1 else "/tmp/fastoffload.sock"
+SOCKET = sys.argv[1] if len(sys.argv) > 1 else "/tmp/state_spectre.sock"
 NPROCS = int(sys.argv[2]) if len(sys.argv) > 2 else 4
 NTENSORS = int(sys.argv[3]) if len(sys.argv) > 3 else 20
 
 
 def worker(rank, socket_path, ntensors, q):
     import torch
-    import fastoffload as fo
+    import state_spectre as ss
     try:
         torch.cuda.set_device(0)
         ok = 0
-        with fo.offload_context(daemon_addr=f"unix://{socket_path}",
+        with ss.offload_context(daemon_addr=f"unix://{socket_path}",
                                 device="cuda:0", rank=rank) as off:
             for i in range(ntensors):
                 # Distinct content per (rank, i) to detect any cross-talk.

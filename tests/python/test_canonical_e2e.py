@@ -14,12 +14,12 @@ Exercises the full v2 Python surface against a live daemon:
 import sys
 import torch
 
-import fastoffload as fo
-from fastoffload import _wire
+import state_spectre as ss
+from state_spectre import _wire
 
 
 def main():
-    sock = sys.argv[1] if len(sys.argv) > 1 else "/tmp/fastoffload.sock"
+    sock = sys.argv[1] if len(sys.argv) > 1 else "/tmp/state_spectre.sock"
     tcp_port = int(sys.argv[2]) if len(sys.argv) > 2 else 19099
     daemon_addr = f"unix://{sock}"
     dev = "cuda:0"
@@ -31,7 +31,7 @@ def main():
     t1_ref = t1.clone().cpu()
     t2_ref = t2.clone().cpu()
 
-    with fo.offload_context(daemon_addr=daemon_addr, device=dev, rank=0,
+    with ss.offload_context(daemon_addr=daemon_addr, device=dev, rank=0,
                             job_name="e2e_rollout_job",
                             scheduler_job_id=4242) as off:
         assert off.job_id is not None, "job registration failed"
@@ -66,7 +66,7 @@ def main():
         assert res["tensor_count"] == 2, res
 
         # Rollout side: pull over the TCP control endpoint.
-        client = fo.RolloutWeightClient(
+        client = ss.RolloutWeightClient(
             daemon_addr=f"tcp://127.0.0.1:{tcp_port}",
             job_id=off.job_id, launch_epoch=off.launch_epoch,
             model_role="policy_rollout", recv_host="127.0.0.1")

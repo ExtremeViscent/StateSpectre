@@ -1,5 +1,5 @@
 manager:
-  daemon_socket: unix:///tmp/fastoffload.sock
+  daemon_socket: unix:///tmp/state_spectre.sock
   enable_canonical_store: true
   enable_manifests: true
   enable_rollout_export: true

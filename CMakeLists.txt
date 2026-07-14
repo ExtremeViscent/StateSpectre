@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(fastoffload LANGUAGES CXX)
+project(state_spectre LANGUAGES CXX)
 
 # -----------------------------------------------------------------------------
 # Centralized GPU tensor-offload runtime.

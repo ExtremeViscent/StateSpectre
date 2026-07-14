@@ -21,8 +21,8 @@ static void test_full_config() {
     // Mirror config/config.example.yaml closely.
     std::string yaml =
         "daemon:\n"
-        "  socket_path: /tmp/fastoffload.sock\n"
-        "  control_shm_name: /fastoffload_ctrl\n"
+        "  socket_path: /tmp/state_spectre.sock\n"
+        "  control_shm_name: /state_spectre_ctrl\n"
         "  heartbeat_timeout_ms: 5000\n"
         "\n"
         "arenas:\n"
@@ -54,15 +54,15 @@ static void test_full_config() {
         "\n"
         "nvme:\n"
         "  enabled: true\n"
-        "  path: /nvme/fastoffload\n"
+        "  path: /nvme/state_spectre\n"
         "  io_engine: io_uring\n"
         "  direct_io: true\n"
         "  stripe: true\n";
     auto path = write_temp(yaml);
     DaemonConfig c = load_config(path);
 
-    CHECK_STREQ(c.socket_path, "/tmp/fastoffload.sock");
-    CHECK_STREQ(c.control_shm_name, "/fastoffload_ctrl");
+    CHECK_STREQ(c.socket_path, "/tmp/state_spectre.sock");
+    CHECK_STREQ(c.control_shm_name, "/state_spectre_ctrl");
     CHECK_EQ(c.heartbeat_timeout_ms, 5000ull);
     CHECK_EQ(c.registration_chunk_bytes, (512ull << 20));
     CHECK_EQ(c.allocation_granularity_bytes, (16ull << 20));
@@ -81,7 +81,7 @@ static void test_full_config() {
     CHECK(c.drain_target == DrainTarget::kPageableThenNvme);
     CHECK(c.drain_on_d2h_complete);
     CHECK(c.nvme_enabled);
-    CHECK_STREQ(c.nvme_path, "/nvme/fastoffload");
+    CHECK_STREQ(c.nvme_path, "/nvme/state_spectre");
     CHECK(c.nvme_direct_io);
     CHECK(c.nvme_stripe);
 }
@@ -154,7 +154,7 @@ static void test_tab_rejected() {
 static void test_v2_config() {
     std::string yaml =
         "daemon:\n"
-        "  socket_path: /tmp/fastoffload.sock\n"
+        "  socket_path: /tmp/state_spectre.sock\n"
         "arenas:\n"
         "  allocation_granularity_mb: 16\n"
         "  per_numa:\n"
