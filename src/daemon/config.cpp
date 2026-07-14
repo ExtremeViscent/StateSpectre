@@ -1,7 +1,7 @@
 // Configuration model + hand-rolled YAML-subset parser for the daemon.
 //
 // Implements everything declared in config.h. We parse the YAML subset shown in
-// spec/config.example.yaml directly (indentation-based "key: value" maps and
+// config/config.example.yaml directly (indentation-based "key: value" maps and
 // "- key: value" lists of maps) without any YAML library dependency.
 
 #include "config.h"

@@ -10,7 +10,7 @@
 //
 // The daemon owns all writes to slot state (routed through RPC handlers).
 // Ranks read slot metadata (arena_id/offset/state) to compute local pointers
-// and to validate readiness. Per ABI_NOTES.md, ranks do not perform arbitrary
+// and to validate readiness. Per docs/design/abi-notes.md, ranks do not perform arbitrary
 // CAS transitions in v1.
 
 #pragma once

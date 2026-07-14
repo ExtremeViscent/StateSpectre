@@ -1,5 +1,5 @@
 # Production daemon config exercising all tunables added in the M7 hardening
-# pass. Superset of spec/config.example.yaml. Values shown are the defaults the
+# pass. Superset of config/config.example.yaml. Values shown are the defaults the
 # daemon applies when a key is omitted; override as needed for your hardware.
 #
 # Measured guidance on this box (8x H20, PCIe Gen5, 2x Samsung MZQL2 NVMe):

@@ -10,8 +10,8 @@
 // v1. CommitCanonicalObject finalizes the object metadata (state, content
 // hash) and resolves duplicate-candidate / hash-verify races.
 //
-// See 01_CANONICAL_MODEL_STATE_STORE.md, 02_DEDUPLICATION_POLICY.md,
-// 03_ROLLOUT_PULL_AND_EXPORT.md, 04_MULTI_JOB_NAMESPACE_AND_QUOTAS.md.
+// See docs/design/canonical-store.md, docs/design/deduplication.md,
+// docs/design/rollout-pull-and-export.md, docs/design/multi-job-and-quotas.md.
 
 #include "daemon.h"
 
@@ -80,7 +80,7 @@ std::string OffloadDaemon::canonical_key_string(const CanonicalTensorKeyWire& k)
 }
 
 // 128-bit content hash: two FNV-1a streams with distinct seeds. Cheap, stable,
-// and good enough to catch a corrupted replica (02_DEDUPLICATION_POLICY.md).
+// and good enough to catch a corrupted replica (docs/design/deduplication.md).
 void OffloadDaemon::hash_bytes(const void* p, uint64_t n, uint64_t* lo, uint64_t* hi) {
     const uint8_t* b = static_cast<const uint8_t*>(p);
     uint64_t h1 = 1469598103934665603ull;   // FNV offset basis

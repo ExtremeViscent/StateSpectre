@@ -5,7 +5,7 @@
 // framing (wire.h: [magic][opcode][flags][len][body]) and v1 messages are
 // untouched. The daemon dispatch switch simply gains the v2 opcodes.
 //
-// Identity stack (see 00_UPDATE_OVERVIEW.md):
+// Identity stack (see docs/ARCHITECTURE.md):
 //   tenant_id -> job_id + launch_epoch -> model_role -> model_version
 //     -> canonical tensor key
 //
@@ -24,7 +24,7 @@ namespace offload {
 
 // ---------------------------------------------------------------------------
 // Job identity. job_id + launch_epoch is identity-critical; job_name is
-// human-readable metadata only (04_MULTI_JOB_NAMESPACE_AND_QUOTAS.md).
+// human-readable metadata only (docs/design/multi-job-and-quotas.md).
 // ---------------------------------------------------------------------------
 struct JobKeyWire {
     uint64_t tenant_id = 0;

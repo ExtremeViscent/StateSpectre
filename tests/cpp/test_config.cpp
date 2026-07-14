@@ -18,7 +18,7 @@ static std::string write_temp(const std::string& contents) {
 }
 
 static void test_full_config() {
-    // Mirror spec/config.example.yaml closely.
+    // Mirror config/config.example.yaml closely.
     std::string yaml =
         "daemon:\n"
         "  socket_path: /tmp/fastoffload.sock\n"

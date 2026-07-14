@@ -1,7 +1,7 @@
 // v2 canonical model-state: sealed manifests + rollout pull/export.
 //
 // Manifests make a model version immutable and rollout-visible. Rollout engines
-// pull ONLY sealed versions (03_ROLLOUT_PULL_AND_EXPORT.md). Export never races
+// pull ONLY sealed versions (docs/design/rollout-pull-and-export.md). Export never races
 // slot recycling/drain: it takes an export lease (export_refcount++), stages the
 // object's current bytes into a host-owned buffer, transports it, then releases.
 //

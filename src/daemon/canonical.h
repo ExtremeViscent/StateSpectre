@@ -78,7 +78,7 @@ struct JobRecord {
     uint64_t created_ns = 0;
     uint64_t heartbeat_ns = 0;
 
-    // Per-job resource accounting (04_MULTI_JOB_NAMESPACE_AND_QUOTAS.md).
+    // Per-job resource accounting (docs/design/multi-job-and-quotas.md).
     uint64_t pinned_bytes = 0;
     uint64_t pageable_bytes = 0;
     uint64_t nvme_bytes = 0;

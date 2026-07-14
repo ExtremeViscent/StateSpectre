@@ -2,6 +2,8 @@
 /build/
 /build_lf/
 python_api/build/
+# CTest artifacts (created when running ctest from the source tree)
+/Testing/
 *.o
 *.a
 *.so

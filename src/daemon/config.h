@@ -1,6 +1,6 @@
 // Configuration model + parser for the daemon.
 //
-// The config file uses the YAML subset shown in spec/config.example.yaml.
+// The config file uses the YAML subset shown in config/config.example.yaml.
 // We parse that subset directly (indentation-based key/value + simple lists of
 // maps) rather than pulling in a YAML library, so the daemon has no extra
 // runtime dependency. Unknown keys are ignored with a warning; missing keys

@@ -4,7 +4,7 @@
 // (producer) pushes ofld_completion_entry_t records as CUDA events complete;
 // the daemon (single consumer for that ring) pops them and applies the slot
 // state transitions — with NO socket RPC on the completion hot path. This is
-// the v2 optimization from RPC_SEMANTICS.md ("migrate completions to
+// the v2 optimization from docs/design/rpc-semantics.md ("migrate completions to
 // shared-memory rings").
 //
 // Memory model: classic SPSC ring with head (consumer) and tail (producer)
@@ -15,7 +15,7 @@
 // slot = index % capacity. Capacity MUST be a power of two.
 //
 // The ring lives entirely in the shared fd mapping, so head/tail are addressed
-// relative to the mapping base (offsets, never pointers) per ABI_NOTES.md.
+// relative to the mapping base (offsets, never pointers) per docs/design/abi-notes.md.
 
 #pragma once
 
