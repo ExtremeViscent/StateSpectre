@@ -699,6 +699,11 @@ void OffloadDaemon::dispatch(int fd, OpCode op, const std::vector<uint8_t>& p) {
                 decode_DropCanonicalVersionRequest(d, n)));
             break;
         }
+        case OpCode::kReleaseCanonical: {
+            body = encode(handle_release_canonical(
+                decode_ReleaseCanonicalRequest(d, n)));
+            break;
+        }
         default:
             OFLD_WARN(TAG, "unknown opcode %u", static_cast<unsigned>(op));
             return;
@@ -754,6 +759,8 @@ RegisterRankResponse OffloadDaemon::handle_register(const RegisterRankRequest& r
             if (s.ring_index < ring_owner_.size())
                 ring_owner_[s.ring_index] = 0xFFFFFFFFu;
         }
+        // Drop this rank's canonical holds; reclaim now-unreferenced objects.
+        purge_rank_from_canonical(s.rank_id);
     };
 
     auto it = sessions_.find(req.rank_id);
@@ -1667,6 +1674,8 @@ void OffloadDaemon::heartbeat_monitor_loop() {
                 }
             }
             for (uint64_t id : to_erase) leases_.erase(id);
+            // Drop the dead rank's canonical holds; reclaim unreferenced objects.
+            purge_rank_from_canonical(s.rank_id);
         }
     }
 }

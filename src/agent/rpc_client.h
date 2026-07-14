@@ -66,6 +66,7 @@ class RpcClient {
         const ReleaseCanonicalRestoreRequest& req);
     DropCanonicalVersionResponse drop_canonical_version(
         const DropCanonicalVersionRequest& req);
+    ReleaseCanonicalResponse release_canonical(const ReleaseCanonicalRequest& req);
 
     int sock() const { return sock_; }
 

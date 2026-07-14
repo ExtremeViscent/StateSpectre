@@ -134,9 +134,7 @@ RegisterJobResponse OffloadDaemon::handle_register_job(const RegisterJobRequest&
 
     JobRecord jr;
     jr.uid.tenant_id = req.tenant_id;
-    // job_id: scheduler-provided stable id wins; else hash (tenant, name) so
-    // the same logical job maps to the same id, but a RELAUNCH still gets a
-    // fresh launch_epoch and thus a distinct namespace.
+    // job_id: scheduler-provided stable id wins; else hash (tenant, name).
     if (req.scheduler_job_id != 0) {
         jr.uid.job_id = req.scheduler_job_id;
     } else {
@@ -144,6 +142,29 @@ RegisterJobResponse OffloadDaemon::handle_register_job(const RegisterJobRequest&
         std::string s = std::to_string(req.tenant_id) + "/" + req.job_name;
         hash_bytes(s.data(), s.size(), &lo, &hi);
         jr.uid.job_id = lo ? lo : 1;
+    }
+    // Idempotent per live (tenant_id, job_id): every rank of the SAME job calls
+    // RegisterJob, and they must all land in ONE namespace (same launch_epoch)
+    // so their replicated shards dedup and share canonical objects. If a live
+    // record already exists, return it. Only a genuine relaunch — after the old
+    // job's record is gone/terminated — mints a fresh launch_epoch.
+    for (auto& kv : jobs_) {
+        JobRecord& ex = kv.second;
+        if (ex.uid.tenant_id == jr.uid.tenant_id && ex.uid.job_id == jr.uid.job_id &&
+            ex.state != JobState::kTerminated) {
+            resp.ok = true;
+            resp.message = "ok (joined existing job)";
+            resp.job.tenant_id = ex.uid.tenant_id;
+            resp.job.job_id = ex.uid.job_id;
+            resp.job.launch_epoch = ex.uid.launch_epoch;
+            resp.job.job_name = ex.job_name;
+            resp.control_generation = header_ ? header_->generation : 0;
+            OFLD_INFO(TAG, "RegisterJob tenant=%llu name=%s -> JOINED job_id=%llu epoch=%llu",
+                      (unsigned long long)ex.uid.tenant_id, ex.job_name.c_str(),
+                      (unsigned long long)ex.uid.job_id,
+                      (unsigned long long)ex.uid.launch_epoch);
+            return resp;
+        }
     }
     jr.uid.launch_epoch = cfg_.v2_include_launch_epoch ? next_launch_epoch_++ : 1;
     jr.job_name = req.job_name;
@@ -288,7 +309,8 @@ RequestCanonicalEvictResponse OffloadDaemon::handle_request_canonical_evict(
                                   mode == DEDUP_SAMPLED_HASH);
         if (!need_verify) {
             // Semantic trusted / disabled-but-present: attach, no D2H.
-            existing->refcount++;
+            existing->holders.insert(req.rank_id);
+            existing->refcount = static_cast<uint32_t>(existing->holders.size());
             existing->last_access_ns = now_real_ns();
             resp.ok = true;
             resp.action = ATTACH_ACTION_ATTACHED_EXISTING;
@@ -375,7 +397,8 @@ RequestCanonicalEvictResponse OffloadDaemon::handle_request_canonical_evict(
     obj.key_str = key_str;
     obj.nbytes = req.key.nbytes;
     obj.state = OBJ_CREATING;
-    obj.refcount = 1;
+    obj.holders.insert(req.rank_id);
+    obj.refcount = static_cast<uint32_t>(obj.holders.size());
     obj.producer_rank = req.rank_id;
     obj.synthetic_tid = synthetic_tid;
     obj.version = 1;
@@ -491,7 +514,8 @@ CommitCanonicalObjectResponse OffloadDaemon::handle_commit_canonical_object(
         return resp;
     }
     // Verified/duplicate loser: attach to the winner.
-    obj->refcount++;
+    obj->holders.insert(req.rank_id);
+    obj->refcount = static_cast<uint32_t>(obj->holders.size());
     obj->last_access_ns = now_real_ns();
     resp.ok = true; resp.won = false; resp.message = "attached after verify";
     Metrics::instance().inc(Metric::kCanonicalAttachExisting);
@@ -529,6 +553,78 @@ bool OffloadDaemon::release_object(CanonicalObject& obj) {
     Metrics::instance().inc(Metric::kCanonicalObjectsDropped);
     objects_.erase(obj.object_id);
     return true;
+}
+
+// Reclaim an object iff no rank holds it and no transfer is in flight (mu_ held).
+bool OffloadDaemon::maybe_free_object(CanonicalObject& obj) {
+    if (!obj.holders.empty()) return false;
+    if (obj.export_refcount > 0 || obj.restore_refcount > 0) return false;
+    return release_object(obj);
+}
+
+// Crash recovery: a dead/relaunched rank drops its hold on every canonical
+// object; objects that lose their last holder (and are idle) are reclaimed.
+void OffloadDaemon::purge_rank_from_canonical(uint32_t rank_id) {
+    std::vector<uint64_t> to_check;
+    for (auto& kv : objects_) {
+        if (kv.second.holders.erase(rank_id)) {
+            kv.second.refcount = static_cast<uint32_t>(kv.second.holders.size());
+            to_check.push_back(kv.first);
+        }
+    }
+    for (uint64_t oid : to_check) {
+        CanonicalObject* o = find_object(oid);
+        if (o) maybe_free_object(*o);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ReleaseCanonical: drop THIS rank's reference (real multi-consumer refcount).
+// object_id != 0 releases one object; 0 releases every object of (role,
+// version) this rank holds. Frees objects that lose their last holder.
+// ---------------------------------------------------------------------------
+ReleaseCanonicalResponse OffloadDaemon::handle_release_canonical(
+    const ReleaseCanonicalRequest& req) {
+    std::lock_guard<std::mutex> lk(mu_);
+    ReleaseCanonicalResponse resp;
+    if (!cfg_.v2_enable_canonical_store) {
+        resp.ok = false; resp.message = "canonical store disabled"; return resp;
+    }
+    if (!epoch_valid(req.rank_id, req.rank_epoch)) {
+        Metrics::instance().inc(Metric::kEpochMismatchRejected);
+        resp.ok = false; resp.message = "epoch invalid"; return resp;
+    }
+    JobRecord* job = find_job_by_wire(req.job);
+    if (!job) { resp.ok = false; resp.message = "job not registered"; return resp; }
+    const JobUID uid = job->uid;
+
+    // Collect the object_ids this rank is releasing.
+    std::vector<uint64_t> ids;
+    if (req.object_id != 0) {
+        ids.push_back(req.object_id);
+    } else {
+        for (auto& kv : objects_) {
+            const CanonicalObject& o = kv.second;
+            if (o.key.job.tenant_id == uid.tenant_id &&
+                o.key.job.job_id == uid.job_id &&
+                o.key.job.launch_epoch == uid.launch_epoch &&
+                o.key.model_role == req.model_role &&
+                o.key.model_version == req.model_version)
+                ids.push_back(o.object_id);
+        }
+    }
+    for (uint64_t oid : ids) {
+        CanonicalObject* o = find_object(oid);
+        if (!o) continue;
+        if (!o->holders.erase(req.rank_id)) continue;   // this rank didn't hold it
+        o->refcount = static_cast<uint32_t>(o->holders.size());
+        resp.released_count++;
+        uint64_t nb = o->nbytes;
+        if (maybe_free_object(*o)) { resp.freed_count++; resp.bytes_freed += nb; }
+    }
+    resp.ok = true;
+    resp.message = "ok";
+    return resp;
 }
 
 }  // namespace offload

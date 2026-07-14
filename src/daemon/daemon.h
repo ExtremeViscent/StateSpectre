@@ -228,6 +228,8 @@ class OffloadDaemon {
         const ReleaseCanonicalRestoreRequest& req);
     DropCanonicalVersionResponse handle_drop_canonical_version(
         const DropCanonicalVersionRequest& req);
+    ReleaseCanonicalResponse handle_release_canonical(
+        const ReleaseCanonicalRequest& req);
 
     // ---- canonical helpers (mu_ held unless noted; canonical.cpp) ----
     static std::string canonical_key_string(const CanonicalTensorKeyWire& k);
@@ -247,6 +249,12 @@ class OffloadDaemon {
     // Returns false (no-op) if an export/restore is in flight; ignores the
     // advisory attachment refcount.
     bool release_object(CanonicalObject& obj);
+    // Reclaim an object iff no rank holds it and no export/restore is in flight.
+    // Returns true if freed (mu_ held).
+    bool maybe_free_object(CanonicalObject& obj);
+    // Drop a dead/relaunched rank from every canonical object's holder set and
+    // reclaim any object that becomes unreferenced (crash recovery; mu_ held).
+    void purge_rank_from_canonical(uint32_t rank_id);
     // Drop all sealed versions of (job, role) beyond retain_sealed_versions,
     // oldest first, skipping any with in-flight transfers (mu_ held).
     void enforce_sealed_retention(const JobUID& job, uint32_t model_role);

@@ -85,8 +85,24 @@ def main():
         off.drop_canonical_version("policy_trainable", 1000 + 19)
         print("[gc] 20 offload cycles with drop_canonical_version — bounded", flush=True)
 
+        # --- release API wiring: create (one holder) then release -> freed.
+        # (True multi-holder free-after-last-release across distinct ranks is
+        # covered in tests/cpp/test_canonical.cpp::test_multi_consumer_refcount;
+        # a single process can hold only one rank, since re-register by the same
+        # pid invalidates the prior session.)
+        w4 = torch.randn(512, 512, device=dev, dtype=torch.float32)
+        k4 = off.canonical_key(model_role="policy_trainable", model_version=2000,
+                               param_name="rel.w", tensor=w4)
+        h4 = off.canonical_evict(w4, k4, destructive=False, wait=True)
+        rel = h4.release()                               # sole holder -> freed
+        assert rel["released"] == 1 and rel["freed"] == 1, rel
+        # release_canonical_version is the batch form (0 objects left to release).
+        rv = off.release_canonical_version("policy_trainable", 2000)
+        assert rv["released"] == 0, rv
+        print("[refcount] release() frees the object; API wiring OK", flush=True)
+
     print("PASS: canonical offload/reload round-trip (create, attached-replica, "
-          "flat-buffer, version GC)")
+          "flat-buffer, version GC, release)")
 
 
 if __name__ == "__main__":

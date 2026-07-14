@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "offload_canonical_abi.hpp"
@@ -104,11 +105,18 @@ struct CanonicalObject {
     uint64_t nbytes = 0;
     CanonicalObjectState state = OBJ_MISSING;
 
-    uint32_t refcount = 0;           // rank attachments
+    uint32_t refcount = 0;           // == holders.size() (attachers); informational
     uint32_t export_refcount = 0;    // in-flight remote transfers
     uint32_t restore_refcount = 0;   // in-flight LOCAL restores (H2D read-backs)
     uint32_t producer_rank = 0;
     uint32_t flags = 0;
+
+    // The set of live ranks that hold a reference to this object (creator +
+    // every rank that ATTACHED). A rank is added on create/attach and removed
+    // on release or session death; the object is reclaimed when this is empty
+    // and no export/restore is in flight. This is the real reference count that
+    // makes shared multi-consumer objects safe to free.
+    std::unordered_set<uint32_t> holders;
 
     uint64_t content_hash_lo = 0;
     uint64_t content_hash_hi = 0;

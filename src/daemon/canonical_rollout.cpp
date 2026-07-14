@@ -388,6 +388,8 @@ PullTensorResponse OffloadDaemon::handle_pull_tensor(const PullTensorRequest& re
         job2->inflight_export_bytes -= nbytes;
     Metrics::instance().sub(Metric::kExportInflightBytes, nbytes);
     Metrics::instance().sub(Metric::kExportStagingBytes, nbytes);
+    // If every holder released while this export was in flight, reclaim now.
+    if (obj) maybe_free_object(*obj);
 
     if (!xres.ok) {
         Metrics::instance().inc(Metric::kExportTransportErrors);
@@ -535,6 +537,8 @@ ReleaseCanonicalRestoreResponse OffloadDaemon::handle_release_canonical_restore(
     }
     CanonicalObject* obj = find_object(req.object_id);
     if (obj && obj->restore_refcount > 0) obj->restore_refcount--;
+    // If every holder released while this restore was in flight, reclaim now.
+    if (obj) maybe_free_object(*obj);
     resp.ok = true;
     resp.message = "ok";
     return resp;

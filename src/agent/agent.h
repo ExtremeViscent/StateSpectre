@@ -206,6 +206,11 @@ class OffloadAgent {
     DropCanonicalVersionResponse drop_canonical_version(
         const DropCanonicalVersionRequest& req);
 
+    // Drop THIS rank's reference to a canonical object/version (multi-consumer
+    // refcount); the daemon reclaims it once no rank holds it and no transfer
+    // is in flight.
+    ReleaseCanonicalResponse release_canonical(const ReleaseCanonicalRequest& req);
+
  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

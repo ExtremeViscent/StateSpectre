@@ -136,6 +136,14 @@ struct RawClient {
         return call<DropCanonicalVersionResponse>(OpCode::kDropCanonicalVersion,
             encode(r), decode_DropCanonicalVersionResponse);
     }
+    ReleaseCanonicalResponse release_canonical(uint32_t rank, uint64_t epoch,
+                                               const JobKeyWire& job, uint32_t role,
+                                               uint64_t ver, uint64_t object_id) {
+        ReleaseCanonicalRequest r; r.rank_id = rank; r.rank_epoch = epoch;
+        r.job = job; r.model_role = role; r.model_version = ver; r.object_id = object_id;
+        return call<ReleaseCanonicalResponse>(OpCode::kReleaseCanonical,
+            encode(r), decode_ReleaseCanonicalResponse);
+    }
 };
 
 struct DaemonFixture {
@@ -221,9 +229,13 @@ static void test_job_namespace(DaemonFixture& fx) {
     auto b = c.register_job("qwen_grpo", 2002);
     CHECK(a.ok); CHECK(b.ok);
     CHECK(a.job.job_id != b.job.job_id);         // different scheduler ids
-    auto a2 = c.register_job("qwen_grpo", 1001);  // relaunch: same id, new epoch
+    // Every rank of the SAME job calls RegisterJob and must JOIN one namespace
+    // (same launch_epoch) so replicated shards dedup — idempotent while live.
+    auto a2 = c.register_job("qwen_grpo", 1001);
     CHECK_EQ(a2.job.job_id, a.job.job_id);
-    CHECK(a2.job.launch_epoch != a.job.launch_epoch);
+    CHECK_EQ(a2.job.launch_epoch, a.job.launch_epoch);
+    // A different job (distinct id) keeps a distinct namespace.
+    CHECK(b.job.launch_epoch != a.job.launch_epoch);
 }
 
 // --------------------------------------------------------------------------
@@ -638,6 +650,58 @@ static void test_drop_version(DaemonFixture& fx) {
     CHECK_EQ(d3.dropped_count, 1u);
 }
 
+// --------------------------------------------------------------------------
+// Multi-consumer refcount: two ranks attach one shared object; it is freed
+// only after BOTH release. A dead rank's hold is purged on re-register.
+// --------------------------------------------------------------------------
+static void test_multi_consumer_refcount(DaemonFixture& fx) {
+    std::vector<int> f0, f1;
+    RawClient c0(fx.sock_path); auto r0 = c0.register_rank(0, &f0);
+    for (int fd : f0) close_fd(fd);
+    RawClient c1(fx.sock_path); auto r1 = c1.register_rank(1, &f1);
+    for (int fd : f1) close_fd(fd);
+    auto j = c0.register_job("multi_job", 73).job;
+    const uint64_t NB = 1u << 20;
+    auto key = mk_key(j, 1, 800, 0, -1, NB);
+
+    // rank0 creates, rank1 attaches -> one object, two holders.
+    auto ev0 = c0.can_evict(mk_evict(0, r0.rank_epoch, key, DEDUP_SEMANTIC_TRUSTED));
+    do_create(c0, 0, r0.rank_epoch, ev0);
+    auto ev1 = c1.can_evict(mk_evict(1, r1.rank_epoch, key, DEDUP_SEMANTIC_TRUSTED));
+    CHECK_EQ(ev1.action, (uint32_t)ATTACH_ACTION_ATTACHED_EXISTING);
+    CHECK_EQ(ev1.object_id, ev0.object_id);
+
+    // rank0 releases: object NOT freed (rank1 still holds it) — still restorable.
+    auto rel0 = c0.release_canonical(0, r0.rank_epoch, j, MODEL_ROLE_POLICY_ROLLOUT, 1, 0);
+    CHECK(rel0.ok);
+    CHECK_EQ(rel0.released_count, 1u);
+    CHECK_EQ(rel0.freed_count, 0u);
+    CHECK(c1.can_restore(1, r1.rank_epoch, ev0.object_id).ok);
+    CHECK(c1.release_restore(1, r1.rank_epoch, ev0.object_id).ok);
+
+    // rank1 releases: last holder gone -> object freed.
+    auto rel1 = c1.release_canonical(1, r1.rank_epoch, j, MODEL_ROLE_POLICY_ROLLOUT, 1, 0);
+    CHECK_EQ(rel1.released_count, 1u);
+    CHECK_EQ(rel1.freed_count, 1u);
+    CHECK_EQ(rel1.bytes_freed, NB);
+    CHECK(!c1.can_restore(1, r1.rank_epoch, ev0.object_id).ok);  // gone
+
+    // Crash recovery: two holders again, then rank1's session dies (re-register
+    // rank1) — its hold is purged. rank0 releasing then frees the object.
+    auto e2 = c0.can_evict(mk_evict(0, r0.rank_epoch, mk_key(j, 2, 801, 0, -1, NB),
+                                    DEDUP_SEMANTIC_TRUSTED));
+    do_create(c0, 0, r0.rank_epoch, e2);
+    std::vector<int> f1b;
+    auto e2b = c1.can_evict(mk_evict(1, r1.rank_epoch, mk_key(j, 2, 801, 0, -1, NB),
+                                     DEDUP_SEMANTIC_TRUSTED));
+    CHECK_EQ(e2b.action, (uint32_t)ATTACH_ACTION_ATTACHED_EXISTING);
+    RawClient c1b(fx.sock_path); auto r1b = c1b.register_rank(1, &f1b);  // kills old rank1 session
+    for (int fd : f1b) close_fd(fd);
+    // rank0 (still the other holder) releases -> object now has no holders -> freed.
+    auto rel = c0.release_canonical(0, r0.rank_epoch, j, MODEL_ROLE_POLICY_ROLLOUT, 2, 0);
+    CHECK_EQ(rel.freed_count, 1u);
+}
+
 }  // namespace
 
 int main() {
@@ -652,6 +716,7 @@ int main() {
         RUN([&]{ test_seal_fail_on_missing(fx); });
         RUN([&]{ test_canonical_restore(fx); });
         RUN([&]{ test_drop_version(fx); });
+        RUN([&]{ test_multi_consumer_refcount(fx); });
         RUN([&]{ test_pull_over_tcp(fx); });
         RUN([&]{ test_seal_empty_ok_but_pull_rejects_unsealed(fx); });
     }

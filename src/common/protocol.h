@@ -59,6 +59,10 @@ enum class OpCode : uint16_t {
     // Explicit GC: release every canonical object of a (job, role, version) so
     // host/NVMe stays bounded when model_version bumps each offload cycle.
     kDropCanonicalVersion    = 29,
+    // Drop THIS rank's reference to a canonical object/version (multi-consumer
+    // refcount). The object is reclaimed when no rank holds it and no transfer
+    // is in flight.
+    kReleaseCanonical        = 30,
 };
 
 const char* op_name(OpCode op);

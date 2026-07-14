@@ -521,6 +521,26 @@ class Context {
                               r.message);
     }
 
+    // Drop THIS session's reference to a canonical object (object_id != 0) or to
+    // every object of (role, version) it holds (object_id == 0). Returns
+    // (released, freed, bytes_freed, message).
+    py::tuple release_canonical(std::uint32_t model_role,
+                                std::uint64_t model_version,
+                                std::uint64_t object_id) {
+        if (!have_job_) throw std::runtime_error("release: register_job() first");
+        offload::ReleaseCanonicalRequest req;
+        req.job = job_; req.model_role = model_role;
+        req.model_version = model_version; req.object_id = object_id;
+        offload::ReleaseCanonicalResponse r;
+        {
+            py::gil_scoped_release unlock;
+            r = agent_->release_canonical(req);
+        }
+        if (!r.ok) throw std::runtime_error("release_canonical failed: " + r.message);
+        return py::make_tuple(r.released_count, r.freed_count, r.bytes_freed,
+                              r.message);
+    }
+
     // Release the agent (joins threads, drains inflight, unmaps). Idempotent.
     void close() { agent_.reset(); }
 
@@ -584,5 +604,7 @@ PYBIND11_MODULE(_state_spectre, m) {
              py::arg("fail_if_missing"))
         .def("drop_canonical_version", &Context::drop_canonical_version,
              py::arg("model_role"), py::arg("model_version"))
+        .def("release_canonical", &Context::release_canonical,
+             py::arg("model_role"), py::arg("model_version"), py::arg("object_id"))
         .def("close", &Context::close);
 }

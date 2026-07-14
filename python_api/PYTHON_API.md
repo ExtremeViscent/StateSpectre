@@ -308,3 +308,37 @@ For the **rollout-publish** path this is automatic: sealing+promoting a new
 version prunes sealed versions beyond `manifest.retain_sealed_versions` (oldest
 first, never the promoted latest, skipping any mid-transfer). Set it to 0 to
 disable auto-retention.
+
+## 15. Multiple consumers: reference-counted release
+
+When several ranks share one deduplicated object (the point of DP dedup),
+freeing by version alone is unsafe — another consumer might still need it. The
+object carries a real **reference count**: the creating rank and every rank that
+`ATTACHED` hold a reference, and it is reclaimed only once the last holder
+releases *and* no export/restore is in flight.
+
+- **Joining one job.** All ranks of a job must land in one namespace to share
+  objects, so `offload_context(job_name=..., scheduler_job_id=SAME)` is
+  **idempotent while the job is live** — every rank registering with the same
+  `scheduler_job_id` gets the same `(job_id, launch_epoch)` and thus shares
+  canonical objects. (A genuine relaunch, after the job is gone, gets a fresh
+  `launch_epoch`.) Use a stable per-job id such as `SLURM_JOB_ID`.
+- **Release your reference** when done with a version:
+
+  ```python
+  h = off.canonical_evict(w, key, destructive=True)   # this rank takes a hold
+  h.restore_into(out)                                  # ... use it ...
+  h.release()                                          # drop THIS rank's hold
+  # or, for every object of a version this rank holds:
+  off.release_canonical_version("policy_trainable", step)
+  ```
+
+  Returns `{"released", "freed", "bytes_freed", "message"}`; `freed` counts
+  objects whose *last* holder was this call. A dead rank's holds are dropped
+  automatically on crash/relaunch, so a failed consumer never pins memory
+  forever.
+
+Prefer refcounted `release_canonical_version` over `drop_canonical_version`
+(§14) when consumers are multiple: `release` frees an object only after its last
+holder is done, whereas `drop` is a coarse force-free that ignores other holders
+(use `drop` only for single-owner cleanup or administrative GC).

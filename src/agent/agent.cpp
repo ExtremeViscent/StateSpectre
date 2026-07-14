@@ -1281,6 +1281,12 @@ DropCanonicalVersionResponse OffloadAgent::drop_canonical_version(
     const DropCanonicalVersionRequest& r) {
     return impl_->rpc->drop_canonical_version(r);
 }
+ReleaseCanonicalResponse OffloadAgent::release_canonical(const ReleaseCanonicalRequest& r) {
+    ReleaseCanonicalRequest req = r;   // stamp this session's rank identity
+    req.rank_id = impl_->rank_id;
+    req.rank_epoch = impl_->rank_epoch;
+    return impl_->rpc->release_canonical(req);
+}
 
 RestoreResult OffloadAgent::canonical_restore(uint64_t object_id, uint64_t dev_ptr,
                                               uint64_t nbytes, StreamHandle stream,

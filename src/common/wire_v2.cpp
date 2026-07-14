@@ -409,4 +409,32 @@ DropCanonicalVersionResponse decode_DropCanonicalVersionResponse(const uint8_t* 
     return m;
 }
 
+// ---- ReleaseCanonical ------------------------------------------------------
+std::vector<uint8_t> encode(const ReleaseCanonicalRequest& m) {
+    std::vector<uint8_t> b; Writer w(b);
+    w.u32(m.rank_id); w.u64(m.rank_epoch);
+    put_jobkey(w, m.job); w.u32(m.model_role); w.u64(m.model_version); w.u64(m.object_id);
+    return b;
+}
+ReleaseCanonicalRequest decode_ReleaseCanonicalRequest(const uint8_t* d, size_t n) {
+    Reader r(d, n); ReleaseCanonicalRequest m;
+    m.rank_id = r.u32(); m.rank_epoch = r.u64();
+    m.job = get_jobkey(r); m.model_role = r.u32(); m.model_version = r.u64();
+    m.object_id = r.u64();
+    return m;
+}
+
+std::vector<uint8_t> encode(const ReleaseCanonicalResponse& m) {
+    std::vector<uint8_t> b; Writer w(b);
+    w.b(m.ok); w.str(m.message);
+    w.u64(m.released_count); w.u64(m.freed_count); w.u64(m.bytes_freed);
+    return b;
+}
+ReleaseCanonicalResponse decode_ReleaseCanonicalResponse(const uint8_t* d, size_t n) {
+    Reader r(d, n); ReleaseCanonicalResponse m;
+    m.ok = r.b(); m.message = r.str();
+    m.released_count = r.u64(); m.freed_count = r.u64(); m.bytes_freed = r.u64();
+    return m;
+}
+
 }  // namespace offload

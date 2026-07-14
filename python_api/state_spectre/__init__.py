@@ -482,6 +482,22 @@ class CanonicalHandle:
         self._off._ctx.canonical_restore_into(dst, self.object_id, stream, wait)
         return dst
 
+    def release(self) -> dict:
+        """Drop this session's reference to the object (multi-consumer refcount).
+
+        Balanced against the hold taken on ``canonical_evict`` (create/attach).
+        The daemon reclaims the object once every attaching rank has released it
+        and no export/restore is in flight — so with multiple consumers sharing
+        one deduplicated object, it is freed only after the last one is done.
+        Returns ``{"released", "freed", "bytes_freed", "message"}``.
+        """
+        if self._off is None:
+            raise RuntimeError("release: handle not bound to a session")
+        released, freed, bytes_freed, message = self._off._ctx.release_canonical(
+            self.key.model_role, self.key.model_version, self.object_id)
+        return {"released": released, "freed": freed, "bytes_freed": bytes_freed,
+                "message": message}
+
     def __repr__(self) -> str:
         return (f"CanonicalHandle(object_id={self.object_id}, "
                 f"action={self.action_name}, did_d2h={self.did_d2h})")
@@ -633,6 +649,21 @@ class Off:
             ModelRole.parse(model_role), int(model_version))
         return {"dropped": dropped, "skipped_inflight": skipped,
                 "bytes_freed": bytes_freed, "message": message}
+
+    def release_canonical_version(self, model_role, model_version: int) -> dict:
+        """Drop THIS session's reference to every object of (role, version).
+
+        The multi-consumer safe path: each attaching rank calls this once it is
+        done with the version; the daemon frees each object only after its last
+        holder releases (and no export/restore is in flight). Prefer this over
+        :meth:`drop_canonical_version` when multiple consumers share objects —
+        ``drop`` is a coarse force-free that ignores other holders. Returns
+        ``{"released", "freed", "bytes_freed", "message"}``.
+        """
+        released, freed, bytes_freed, message = self._ctx.release_canonical(
+            ModelRole.parse(model_role), int(model_version), 0)
+        return {"released": released, "freed": freed, "bytes_freed": bytes_freed,
+                "message": message}
 
     # ---- internal helpers ------------------------------------------------- #
     @staticmethod

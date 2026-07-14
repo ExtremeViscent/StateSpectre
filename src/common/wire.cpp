@@ -30,6 +30,7 @@ const char* op_name(OpCode op) {
         case OpCode::kRequestCanonicalRestore: return "RequestCanonicalRestore";
         case OpCode::kReleaseCanonicalRestore: return "ReleaseCanonicalRestore";
         case OpCode::kDropCanonicalVersion:    return "DropCanonicalVersion";
+        case OpCode::kReleaseCanonical:        return "ReleaseCanonical";
     }
     return "Unknown";
 }

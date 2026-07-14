@@ -232,6 +232,23 @@ static void test_canonical_restore() {
     CHECK_EQ(drd.dropped_count, 7u);
     CHECK_EQ(drd.skipped_inflight, 1u);
     CHECK_EQ(drd.bytes_freed, (uint64_t)(1ull << 30));
+
+    ReleaseCanonicalRequest rc;
+    rc.rank_id = 4; rc.rank_epoch = 8; rc.job = mk_job(); rc.model_role = 1;
+    rc.model_version = 55; rc.object_id = 0;
+    auto rcb = encode(rc);
+    auto rcd = decode_ReleaseCanonicalRequest(rcb.data(), rcb.size());
+    CHECK_EQ(rcd.rank_id, 4u);
+    CHECK_EQ(rcd.model_version, 55u);
+    CHECK_EQ(rcd.object_id, 0u);
+    ReleaseCanonicalResponse rcresp;
+    rcresp.ok = true; rcresp.released_count = 3; rcresp.freed_count = 2;
+    rcresp.bytes_freed = 4096;
+    auto rcrb = encode(rcresp);
+    auto rcrd = decode_ReleaseCanonicalResponse(rcrb.data(), rcrb.size());
+    CHECK_EQ(rcrd.released_count, 3u);
+    CHECK_EQ(rcrd.freed_count, 2u);
+    CHECK_EQ(rcrd.bytes_freed, 4096u);
 }
 
 int main() {

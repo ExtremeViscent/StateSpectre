@@ -303,4 +303,26 @@ struct DropCanonicalVersionResponse {
     uint64_t bytes_freed = 0;        // sum of freed object nbytes
 };
 
+// Drop THIS rank's reference to canonical objects (the real multi-consumer
+// refcount). object_id != 0 releases one object; object_id == 0 releases every
+// object of (model_role, model_version) this rank holds. An object is reclaimed
+// once no rank holds it and no export/restore is in flight. Balanced against the
+// hold each rank takes on create/attach; idempotent per rank.
+struct ReleaseCanonicalRequest {
+    uint32_t rank_id = 0;
+    uint64_t rank_epoch = 0;
+    JobKeyWire job;
+    uint32_t model_role = 0;
+    uint64_t model_version = 0;      // used when object_id == 0
+    uint64_t object_id = 0;          // 0 => all objects of (role, version)
+};
+
+struct ReleaseCanonicalResponse {
+    bool ok = false;
+    std::string message;
+    uint64_t released_count = 0;     // holds dropped by this rank
+    uint64_t freed_count = 0;        // objects reclaimed (last holder released)
+    uint64_t bytes_freed = 0;
+};
+
 }  // namespace offload
