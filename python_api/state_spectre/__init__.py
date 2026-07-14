@@ -858,7 +858,57 @@ class Off:
 # --------------------------------------------------------------------------- #
 # offload_context — the session context manager
 # --------------------------------------------------------------------------- #
-@contextlib.contextmanager
+class _OffloadSession:
+    """Context manager returned by :func:`offload_context`.
+
+    Deliberately a plain object, NOT a ``@contextlib.contextmanager`` generator:
+    a generator-based CM used via ``.__enter__()`` without a ``with`` block gets
+    garbage-collected, and GC finalizes the generator — running its ``finally``
+    and closing the agent underneath a still-referenced ``Off``. A plain object
+    closes the agent ONLY on explicit ``__exit__`` / :meth:`close`, so both
+    ``with off:`` and ``off = offload_context(...).__enter__()`` are safe.
+    """
+
+    def __init__(self, *, daemon_addr, device, rank, local_rank, world_rank,
+                 numa_node, register_policy, registration_chunk_mb,
+                 eager_register, job_name, tenant_id, scheduler_job_id,
+                 dedup_policy):
+        self._device_index = _parse_device_index(device, 0)
+        eager = eager_register or (register_policy in ("eager", "eager_all"))
+        ctx = _state_spectre.Context(
+            _parse_socket_path(daemon_addr), self._device_index, int(rank),
+            int(local_rank), int(world_rank), int(numa_node),
+            int(registration_chunk_mb) * (1 << 20), bool(eager),
+        )
+        off = Off(ctx, self._device_index)
+        if dedup_policy is not None:
+            off.set_dedup_policy(dedup_policy)
+        if job_name is not None:
+            sched = 0 if scheduler_job_id is None else int(scheduler_job_id)
+            off._register_job(tenant_id, job_name, sched)
+        self._off = off
+        self._ctx = ctx
+        self._closed = False
+
+    def __enter__(self) -> "Off":
+        return self._off
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        # Best-effort: wait for inflight to settle, then release the agent.
+        try:
+            torch.cuda.synchronize(torch.device("cuda", self._device_index))
+        except Exception:
+            pass
+        self._ctx.close()
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
+
+
 def offload_context(daemon_addr: str = "unix:///tmp/state_spectre.sock",
                     device: Union[str, int, torch.device] = "cuda:0",
                     rank: int = 0, local_rank: int = 0, world_rank: int = 0,
@@ -871,7 +921,7 @@ def offload_context(daemon_addr: str = "unix:///tmp/state_spectre.sock",
                     job_name: Optional[str] = None,
                     tenant_id: int = 0,
                     scheduler_job_id=None,
-                    dedup_policy: Optional["DedupPolicy"] = None):
+                    dedup_policy: Optional["DedupPolicy"] = None) -> "_OffloadSession":
     """Manage an offload runtime session (PYTHON_API §2 + v2 canonical §Job).
 
     Connects to the daemon, receives arena/control fds, mmaps them,
@@ -882,34 +932,18 @@ def offload_context(daemon_addr: str = "unix:///tmp/state_spectre.sock",
     If ``job_name`` is given the session registers a v2 job; the daemon assigns
     ``off.job_id`` / ``off.launch_epoch`` and canonical evicts become available.
 
-    Yields an :class:`Off` session object.
+    Returns an :class:`_OffloadSession` whose ``__enter__`` yields an
+    :class:`Off`. Use it as ``with offload_context(...) as off:``. If you must
+    keep it outside a ``with`` block, retain the returned session object (not
+    just the ``off`` it yields) and call ``.close()`` when done — the agent stays
+    alive until then; calling into a closed session raises rather than crashes.
     """
-    socket_path = _parse_socket_path(daemon_addr)
-    device_index = _parse_device_index(device, 0)
-
-    # register_policy controls eager vs lazy chunked cudaHostRegister.
-    eager = eager_register or (register_policy in ("eager", "eager_all"))
-    chunk_bytes = int(registration_chunk_mb) * (1 << 20)
-
-    ctx = _state_spectre.Context(
-        socket_path, device_index, int(rank), int(local_rank), int(world_rank),
-        int(numa_node), int(chunk_bytes), bool(eager),
-    )
-    off = Off(ctx, device_index)
-    if dedup_policy is not None:
-        off.set_dedup_policy(dedup_policy)
-    if job_name is not None:
-        sched = 0 if scheduler_job_id is None else int(scheduler_job_id)
-        off._register_job(tenant_id, job_name, sched)
-    try:
-        yield off
-    finally:
-        # Best-effort: wait for inflight to settle, then release the agent.
-        try:
-            torch.cuda.synchronize(torch.device("cuda", device_index))
-        except Exception:
-            pass
-        ctx.close()
+    return _OffloadSession(
+        daemon_addr=daemon_addr, device=device, rank=rank, local_rank=local_rank,
+        world_rank=world_rank, numa_node=numa_node, register_policy=register_policy,
+        registration_chunk_mb=registration_chunk_mb, eager_register=eager_register,
+        job_name=job_name, tenant_id=tenant_id, scheduler_job_id=scheduler_job_id,
+        dedup_policy=dedup_policy)
 
 
 # --------------------------------------------------------------------------- #

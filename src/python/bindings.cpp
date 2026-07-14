@@ -152,7 +152,7 @@ class Context {
             throw std::runtime_error("evict: tensor must be a CUDA tensor");
         }
 
-        const int device = agent_->cuda_device();
+        const int device = ag()->cuda_device();
         const std::uint64_t scalar_type = static_cast<std::uint64_t>(t.scalar_type());
         const int device_index = t.get_device();
 
@@ -228,7 +228,7 @@ class Context {
             // the callback when wait=false, and (b) other Python threads run
             // while the (possibly blocking, wait=true) D2H proceeds.
             py::gil_scoped_release unlock;
-            ticket = agent_->evict(dev_ptr, nbytes, stream, destructive, meta, cb,
+            ticket = ag()->evict(dev_ptr, nbytes, stream, destructive, meta, cb,
                                    /*cookie=*/tensor_id, wait);
         }
         if (!ticket.ok) {
@@ -246,7 +246,7 @@ class Context {
                           std::vector<std::int64_t> shape, std::uint64_t scalar_type,
                           int device_index, py::object stream_obj, bool wait) {
         auto dtype = static_cast<c10::ScalarType>(scalar_type);
-        if (device_index < 0) device_index = agent_->cuda_device();
+        if (device_index < 0) device_index = ag()->cuda_device();
 
         auto options = torch::TensorOptions()
                            .dtype(dtype)
@@ -262,7 +262,7 @@ class Context {
         RestoreResult r;
         {
             py::gil_scoped_release unlock;
-            r = agent_->restore(tensor_id, version, dev_ptr, nbytes, stream, wait);
+            r = ag()->restore(tensor_id, version, dev_ptr, nbytes, stream, wait);
         }
         if (!r.ok) {
             throw std::runtime_error("restore failed: " + r.message);
@@ -297,7 +297,7 @@ class Context {
         RestoreResult r;
         {
             py::gil_scoped_release unlock;
-            r = agent_->restore(tensor_id, version, dev_ptr, nbytes, stream, wait);
+            r = ag()->restore(tensor_id, version, dev_ptr, nbytes, stream, wait);
         }
         if (!r.ok) {
             throw std::runtime_error("restore_into failed: " + r.message);
@@ -326,7 +326,7 @@ class Context {
         RestoreResult r;
         {
             py::gil_scoped_release unlock;
-            r = agent_->canonical_restore(object_id, dev_ptr, nbytes, stream, wait);
+            r = ag()->canonical_restore(object_id, dev_ptr, nbytes, stream, wait);
         }
         if (!r.ok) {
             throw std::runtime_error("canonical_restore_into failed: " + r.message);
@@ -335,31 +335,31 @@ class Context {
 
     // ---- introspection / lifecycle ---------------------------------------
     bool is_offloaded(std::uint64_t tensor_id, std::uint64_t version) const {
-        return agent_->is_offloaded(tensor_id, version);
+        return ag()->is_offloaded(tensor_id, version);
     }
 
     void wait_offloaded(std::uint64_t tensor_id, std::uint64_t version) {
         py::gil_scoped_release unlock;
-        agent_->wait_offloaded(tensor_id, version);
+        ag()->wait_offloaded(tensor_id, version);
     }
 
     std::string location(std::uint64_t tensor_id, std::uint64_t version) const {
         py::gil_scoped_release unlock;
-        return agent_->location(tensor_id, version);
+        return ag()->location(tensor_id, version);
     }
 
     void discard(std::uint64_t tensor_id, std::uint64_t version) {
         py::gil_scoped_release unlock;
-        agent_->discard(tensor_id, version);
+        ag()->discard(tensor_id, version);
     }
 
     std::string summary_string() const {
         py::gil_scoped_release unlock;
-        return agent_->summary_string();
+        return ag()->summary_string();
     }
 
     py::dict summary() const {
-        AgentSummary s = agent_->summary();
+        AgentSummary s = ag()->summary();
         py::dict d;
         d["rank_id"] = s.rank_id;
         d["gpu_id"] = s.gpu_id;
@@ -376,11 +376,11 @@ class Context {
         return d;
     }
 
-    void assert_no_inflight() const { agent_->assert_no_inflight(); }
+    void assert_no_inflight() const { ag()->assert_no_inflight(); }
 
-    int cuda_device() const { return agent_->cuda_device(); }
-    int numa_node() const { return agent_->numa_node(); }
-    std::uint32_t rank_id() const { return agent_->rank_id(); }
+    int cuda_device() const { return ag()->cuda_device(); }
+    int numa_node() const { return ag()->numa_node(); }
+    std::uint32_t rank_id() const { return ag()->rank_id(); }
 
     // ---- v2 canonical model-state API ------------------------------------
     py::tuple register_job(std::uint64_t tenant_id, const std::string& job_name,
@@ -392,7 +392,7 @@ class Context {
         offload::RegisterJobResponse r;
         {
             py::gil_scoped_release unlock;
-            r = agent_->register_job(req);
+            r = ag()->register_job(req);
         }
         if (!r.ok) throw std::runtime_error("register_job failed: " + r.message);
         job_ = r.job;
@@ -421,7 +421,7 @@ class Context {
         if (!have_job_)
             throw std::runtime_error("canonical_evict: register_job() first");
 
-        const int device = agent_->cuda_device();
+        const int device = ag()->cuda_device();
         torch::Tensor source;
         bool do_invalidate = destructive;
         if (compact || allow_views) {
@@ -478,7 +478,7 @@ class Context {
         offload::CanonicalEvictResult res;
         {
             py::gil_scoped_release unlock;
-            res = agent_->canonical_evict(dev_ptr, nbytes, stream, destructive,
+            res = ag()->canonical_evict(dev_ptr, nbytes, stream, destructive,
                                           req, cb, /*cookie=*/local_tensor_id,
                                           hash_on_commit, wait);
         }
@@ -497,7 +497,7 @@ class Context {
         offload::SealModelVersionResponse r;
         {
             py::gil_scoped_release unlock;
-            r = agent_->seal_model_version(req);
+            r = ag()->seal_model_version(req);
         }
         return py::make_tuple(r.ok, r.state, r.tensor_count, r.total_nbytes,
                               r.message);
@@ -514,7 +514,7 @@ class Context {
         offload::DropCanonicalVersionResponse r;
         {
             py::gil_scoped_release unlock;
-            r = agent_->drop_canonical_version(req);
+            r = ag()->drop_canonical_version(req);
         }
         if (!r.ok) throw std::runtime_error("drop_canonical_version failed: " + r.message);
         return py::make_tuple(r.dropped_count, r.skipped_inflight, r.bytes_freed,
@@ -534,7 +534,7 @@ class Context {
         offload::ReleaseCanonicalResponse r;
         {
             py::gil_scoped_release unlock;
-            r = agent_->release_canonical(req);
+            r = ag()->release_canonical(req);
         }
         if (!r.ok) throw std::runtime_error("release_canonical failed: " + r.message);
         return py::make_tuple(r.released_count, r.freed_count, r.bytes_freed,
@@ -545,6 +545,20 @@ class Context {
     void close() { agent_.reset(); }
 
  private:
+    // Null-guarded agent accessor. After close() (or a premature ctx.close()
+    // from a garbage-collected offload_context that was used without `with`)
+    // agent_ is null; dereferencing it would SIGSEGV. Raise a clean, catchable
+    // error instead so a closed session never crashes the process.
+    OffloadAgent* ag() const {
+        if (!agent_) {
+            throw std::runtime_error(
+                "state_spectre: session is closed — the offload_context has "
+                "exited or was garbage-collected. Keep it in a `with` block (or "
+                "hold the object it returns) for the lifetime of its use.");
+        }
+        return agent_.get();
+    }
+
     std::unique_ptr<OffloadAgent> agent_;
     offload::JobKeyWire job_;
     bool have_job_ = false;
