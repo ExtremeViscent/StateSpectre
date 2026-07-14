@@ -1030,7 +1030,15 @@ bool OffloadDaemon::apply_d2h_complete(uint32_t rank_id, uint64_t rank_epoch,
     Trace::instance().event("D2H_COMPLETE", rank_id, 0, tensor_id, version,
                             lease_id, L->base_slot, L->nbytes);
 
-    if (should_drain(&slots_[L->base_slot])) {
+    // Do not drain a canonical object that is still being created: its lease
+    // must survive until CommitCanonicalObject runs. (Committed canonical
+    // objects and plain v1 tensors drain normally.)
+    bool creating_canonical = false;
+    if (is_canonical_tid(tensor_id)) {
+        CanonicalObject* co = find_object(tensor_id & ~kCanonicalTidBit);
+        creating_canonical = (co && co->state == OBJ_CREATING);
+    }
+    if (!creating_canonical && should_drain(&slots_[L->base_slot])) {
         for (uint32_t k = 0; k < L->slot_count; ++k)
             set_slot_state(L->base_slot + k, OFLD_SLOT_DRAIN_IN_FLIGHT);
         {
@@ -1465,7 +1473,8 @@ bool OffloadDaemon::force_drain_one(std::unique_lock<std::mutex>& lk) {
         // without holding mu_, so freeing/migrating it would race the copy.
         if (is_canonical_tid(L.tensor_id)) {
             CanonicalObject* co = find_object(L.tensor_id & ~kCanonicalTidBit);
-            if (co && (co->restore_refcount > 0 || co->export_refcount > 0)) continue;
+            if (co && (co->restore_refcount > 0 || co->export_refcount > 0 ||
+                       co->state == OBJ_CREATING)) continue;
         }
         uint64_t ts = slots_[L.base_slot].last_touch_ns;
         if (ts < best_ts) { best_ts = ts; best_lease = L.lease_id; }

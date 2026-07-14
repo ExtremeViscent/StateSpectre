@@ -442,25 +442,37 @@ CommitCanonicalObjectResponse OffloadDaemon::handle_commit_canonical_object(
     CanonicalObject* obj = find_object(req.object_id);
     if (!obj) { resp.ok = false; resp.message = "unknown object"; return resp; }
 
+    // The reservation lease may already be gone: the canonical creator's slot
+    // rides the v1 D2H/drain machinery, so a background drain (or force-drain
+    // under pressure from a coexisting destructive evict) can recycle the lease
+    // between MarkD2HComplete and this commit. That is harmless — the object's
+    // bytes are safe in whatever tier the location table points at — so DO NOT
+    // require the lease. Identify the creator from the object's own stored
+    // lease_id, and validate via the location table, not the (possibly reused)
+    // slot.
     Lease* L = find_lease(req.lease_id);
-    if (!L) { resp.ok = false; resp.message = "unknown lease"; return resp; }
-
     const bool is_creator =
         (obj->state == OBJ_CREATING && obj->lease_id == req.lease_id);
 
     // ---------------- creator commit ----------------
     if (is_creator) {
-        // The rank's MarkD2HComplete has already driven the slot to
-        // PINNED_VALID and published locations_[synthetic_tid]. Finalize state.
-        uint32_t st = slot_state(obj->base_slot);
-        if (st != OFLD_SLOT_PINNED_VALID && st != OFLD_SLOT_DRAIN_IN_FLIGHT &&
-            st != OFLD_SLOT_COLD_VALID) {
+        auto lit = locations_.find(obj->synthetic_tid);
+        const bool valid = (lit != locations_.end() &&
+                            lit->second.kind != OFLD_LOC_NONE &&
+                            lit->second.kind != OFLD_LOC_DELETED);
+        if (!valid) {
             Metrics::instance().inc(Metric::kInvalidTransitionRejected);
             resp.ok = false; resp.message = "object bytes not yet valid"; return resp;
         }
         obj->content_hash_lo = req.content_hash_lo;
         obj->content_hash_hi = req.content_hash_hi;
-        obj->state = OBJ_VALID_PINNED;
+        // Reflect the tier the bytes currently live in (a drain may have already
+        // moved them to a cold tier before this commit landed).
+        switch (lit->second.kind) {
+            case OFLD_LOC_PAGEABLE: obj->state = OBJ_VALID_PAGEABLE; break;
+            case OFLD_LOC_NVME:     obj->state = OBJ_VALID_NVME; break;
+            default:                obj->state = OBJ_VALID_PINNED; break;
+        }
         obj->creating_rank = 0xFFFFFFFFu;
         obj->last_access_ns = now_real_ns();
         resp.ok = true; resp.won = true; resp.message = "committed";
@@ -482,25 +494,22 @@ CommitCanonicalObjectResponse OffloadDaemon::handle_commit_canonical_object(
                    obj->content_hash_hi == req.content_hash_hi);
     }
 
-    // Free the candidate's slot run + lease + throwaway location.
-    uint32_t cbase = L->base_slot, ccnt = L->slot_count;
-    uint64_t ctid = L->tensor_id;
+    // Free the candidate's slot run + lease + throwaway location. If the
+    // candidate's lease was itself recycled by a drain, the drain already owns
+    // the slot lifecycle — just proceed to the attach.
     JobRecord* job = find_job_by_wire(obj->key.job);
-    for (uint32_t k = 0; k < ccnt; ++k) {
-        uint32_t st = slot_state(cbase + k);
-        if (st == OFLD_SLOT_DRAIN_IN_FLIGHT || st == OFLD_SLOT_COLD_VALID) {
-            // Drain owns the slot lifecycle; just drop the throwaway location.
+    if (L) {
+        uint32_t cbase = L->base_slot, ccnt = L->slot_count;
+        uint64_t ctid = L->tensor_id;
+        uint32_t cst = slot_state(cbase);
+        if (cst == OFLD_SLOT_PINNED_VALID || cst == OFLD_SLOT_RESERVED_D2H ||
+            cst == OFLD_SLOT_D2H_IN_FLIGHT) {
+            free_slots(cbase, ccnt);
         }
+        locations_.erase(ctid);
+        leases_.erase(req.lease_id);
+        if (job && job->pinned_bytes >= obj->nbytes) job->pinned_bytes -= obj->nbytes;
     }
-    // Only free if not mid-drain (mirror release_lease semantics).
-    uint32_t cst = slot_state(cbase);
-    if (cst == OFLD_SLOT_PINNED_VALID || cst == OFLD_SLOT_RESERVED_D2H ||
-        cst == OFLD_SLOT_D2H_IN_FLIGHT) {
-        free_slots(cbase, ccnt);
-    }
-    locations_.erase(ctid);
-    leases_.erase(req.lease_id);
-    if (job && job->pinned_bytes >= obj->nbytes) job->pinned_bytes -= obj->nbytes;
 
     if (!obj_valid) {
         resp.ok = false; resp.message = "canonical object not valid for attach";
