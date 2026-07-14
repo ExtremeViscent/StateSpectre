@@ -200,6 +200,12 @@ class OffloadAgent {
     RestoreResult canonical_restore(uint64_t object_id, uint64_t dev_ptr,
                                     uint64_t nbytes, StreamHandle stream, bool wait);
 
+    // Explicit GC: release every canonical object of (job, role, version). The
+    // job identity is the one this session registered. Returns the daemon's
+    // count of dropped / skipped-in-flight objects and bytes freed.
+    DropCanonicalVersionResponse drop_canonical_version(
+        const DropCanonicalVersionRequest& req);
+
  private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

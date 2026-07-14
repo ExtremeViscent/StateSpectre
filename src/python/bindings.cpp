@@ -503,6 +503,24 @@ class Context {
                               r.message);
     }
 
+    // Explicit GC of a (role, version). Returns (dropped, skipped_inflight,
+    // bytes_freed, message).
+    py::tuple drop_canonical_version(std::uint32_t model_role,
+                                     std::uint64_t model_version) {
+        if (!have_job_) throw std::runtime_error("drop: register_job() first");
+        offload::DropCanonicalVersionRequest req;
+        req.job = job_; req.model_role = model_role;
+        req.model_version = model_version;
+        offload::DropCanonicalVersionResponse r;
+        {
+            py::gil_scoped_release unlock;
+            r = agent_->drop_canonical_version(req);
+        }
+        if (!r.ok) throw std::runtime_error("drop_canonical_version failed: " + r.message);
+        return py::make_tuple(r.dropped_count, r.skipped_inflight, r.bytes_freed,
+                              r.message);
+    }
+
     // Release the agent (joins threads, drains inflight, unmaps). Idempotent.
     void close() { agent_.reset(); }
 
@@ -564,5 +582,7 @@ PYBIND11_MODULE(_state_spectre, m) {
         .def("seal_model_version", &Context::seal_model_version,
              py::arg("model_role"), py::arg("model_version"), py::arg("promote"),
              py::arg("fail_if_missing"))
+        .def("drop_canonical_version", &Context::drop_canonical_version,
+             py::arg("model_role"), py::arg("model_version"))
         .def("close", &Context::close);
 }

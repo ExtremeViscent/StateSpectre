@@ -384,4 +384,29 @@ ReleaseCanonicalRestoreResponse decode_ReleaseCanonicalRestoreResponse(const uin
     return m;
 }
 
+// ---- DropCanonicalVersion --------------------------------------------------
+std::vector<uint8_t> encode(const DropCanonicalVersionRequest& m) {
+    std::vector<uint8_t> b; Writer w(b);
+    put_jobkey(w, m.job); w.u32(m.model_role); w.u64(m.model_version);
+    return b;
+}
+DropCanonicalVersionRequest decode_DropCanonicalVersionRequest(const uint8_t* d, size_t n) {
+    Reader r(d, n); DropCanonicalVersionRequest m;
+    m.job = get_jobkey(r); m.model_role = r.u32(); m.model_version = r.u64();
+    return m;
+}
+
+std::vector<uint8_t> encode(const DropCanonicalVersionResponse& m) {
+    std::vector<uint8_t> b; Writer w(b);
+    w.b(m.ok); w.str(m.message);
+    w.u64(m.dropped_count); w.u64(m.skipped_inflight); w.u64(m.bytes_freed);
+    return b;
+}
+DropCanonicalVersionResponse decode_DropCanonicalVersionResponse(const uint8_t* d, size_t n) {
+    Reader r(d, n); DropCanonicalVersionResponse m;
+    m.ok = r.b(); m.message = r.str();
+    m.dropped_count = r.u64(); m.skipped_inflight = r.u64(); m.bytes_freed = r.u64();
+    return m;
+}
+
 }  // namespace offload

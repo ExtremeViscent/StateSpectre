@@ -284,4 +284,23 @@ struct ReleaseCanonicalRestoreResponse {
     std::string message;
 };
 
+// Explicit version GC. Releases every canonical object of (job, model_role,
+// model_version) and its manifest. Honors in-flight export/restore holds
+// (those objects are skipped and reported so the caller can retry); it does
+// NOT honor the advisory attachment refcount — this is a coarse "the whole
+// version is dead" GC the trainer issues once the version is no longer needed.
+struct DropCanonicalVersionRequest {
+    JobKeyWire job;
+    uint32_t model_role = 0;
+    uint64_t model_version = 0;
+};
+
+struct DropCanonicalVersionResponse {
+    bool ok = false;
+    std::string message;
+    uint64_t dropped_count = 0;      // objects freed
+    uint64_t skipped_inflight = 0;   // objects skipped (export/restore in flight)
+    uint64_t bytes_freed = 0;        // sum of freed object nbytes
+};
+
 }  // namespace offload

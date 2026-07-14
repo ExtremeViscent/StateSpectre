@@ -36,6 +36,8 @@ OFLD_CODEC_V2(RequestCanonicalRestoreRequest)
 OFLD_CODEC_V2(RequestCanonicalRestoreResponse)
 OFLD_CODEC_V2(ReleaseCanonicalRestoreRequest)
 OFLD_CODEC_V2(ReleaseCanonicalRestoreResponse)
+OFLD_CODEC_V2(DropCanonicalVersionRequest)
+OFLD_CODEC_V2(DropCanonicalVersionResponse)
 
 #undef OFLD_CODEC_V2
 

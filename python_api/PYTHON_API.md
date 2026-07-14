@@ -280,3 +280,31 @@ and repeatedly. It resolves the object from whichever tier it currently lives in
 For aliased flat buffers, combine with the storage-resize recipe in §12:
 `off.copy`/`canonical_evict` → `storage().resize_(0)` → `resize_(nbytes)` →
 `h.restore_into(buf)`.
+
+## 14. Version lifecycle & GC (bounding host/NVMe over a long run)
+
+Because param bytes change every optimizer step, the offload/reload round-trip
+must use a **fresh `model_version` each cycle** (reusing a version would
+dedup-attach to stale bytes). The daemon does **not** auto-reclaim old versions
+from the refcount alone — `force_drain` only migrates tiers, it does not delete
+objects — so a long run must drop old versions explicitly, or host/NVMe grows
+unbounded:
+
+```python
+h = off.canonical_evict(w, off.canonical_key(..., model_version=step), destructive=True)
+# ... rollout, then reload ...
+h.restore_into(out)
+off.drop_canonical_version("policy_trainable", step - 1)   # reclaim last cycle
+```
+
+`off.drop_canonical_version(model_role, model_version)` releases every object of
+that version (and its manifest), returning
+`{"dropped", "skipped_inflight", "bytes_freed", "message"}`. It honors in-flight
+export/restore holds (those objects are skipped and reported — retry after the
+transfer finishes) and ignores the advisory attachment refcount (it is a coarse
+"this whole version is dead" GC the trainer coordinates).
+
+For the **rollout-publish** path this is automatic: sealing+promoting a new
+version prunes sealed versions beyond `manifest.retain_sealed_versions` (oldest
+first, never the promoted latest, skipping any mid-transfer). Set it to 0 to
+disable auto-retention.

@@ -226,6 +226,8 @@ class OffloadDaemon {
         const RequestCanonicalRestoreRequest& req);
     ReleaseCanonicalRestoreResponse handle_release_canonical_restore(
         const ReleaseCanonicalRestoreRequest& req);
+    DropCanonicalVersionResponse handle_drop_canonical_version(
+        const DropCanonicalVersionRequest& req);
 
     // ---- canonical helpers (mu_ held unless noted; canonical.cpp) ----
     static std::string canonical_key_string(const CanonicalTensorKeyWire& k);
@@ -242,7 +244,12 @@ class OffloadDaemon {
     // Best-effort per-job pinned quota check.
     bool quota_allows_pinned(const JobRecord& job, uint64_t nbytes) const;
     // Release a canonical object's physical backing + table entry (mu_ held).
-    void release_object(CanonicalObject& obj);
+    // Returns false (no-op) if an export/restore is in flight; ignores the
+    // advisory attachment refcount.
+    bool release_object(CanonicalObject& obj);
+    // Drop all sealed versions of (job, role) beyond retain_sealed_versions,
+    // oldest first, skipping any with in-flight transfers (mu_ held).
+    void enforce_sealed_retention(const JobUID& job, uint32_t model_role);
 
     // Shared logic for a single D2H completion (used by MarkD2HComplete and
     // BatchComplete). Returns true if accepted. mu_ held.

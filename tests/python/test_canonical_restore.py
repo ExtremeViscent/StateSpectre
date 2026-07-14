@@ -68,7 +68,25 @@ def main():
         assert torch.equal(buf.cpu(), ref.reshape(-1)), "flat-buffer reload mismatch"
         print("[reload] aliased flat-buffer resize+restore_into byte-exact", flush=True)
 
-    print("PASS: canonical offload/reload round-trip (create, attached-replica, flat-buffer)")
+        # --- version GC: many offload cycles stay bounded via drop_canonical_version ---
+        # model_version bumps each cycle (param bytes change), so old versions must
+        # be dropped or host/NVMe grows unbounded.
+        w3 = torch.randn(1024, 1024, device=dev, dtype=torch.float32)  # 4 MiB
+        for step in range(20):
+            k = off.canonical_key(model_role="policy_trainable", model_version=1000 + step,
+                                  param_name="cyc.w", tensor=w3)
+            hc = off.canonical_evict(w3, k, destructive=False, wait=True)
+            out3 = torch.empty_like(w3)
+            hc.restore_into(out3, wait=True)          # reload this step
+            if step > 0:
+                r = off.drop_canonical_version("policy_trainable", 1000 + step - 1)
+                assert r["dropped"] == 1, r           # previous cycle reclaimed
+        # Drop the final one too.
+        off.drop_canonical_version("policy_trainable", 1000 + 19)
+        print("[gc] 20 offload cycles with drop_canonical_version — bounded", flush=True)
+
+    print("PASS: canonical offload/reload round-trip (create, attached-replica, "
+          "flat-buffer, version GC)")
 
 
 if __name__ == "__main__":

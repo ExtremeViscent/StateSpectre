@@ -616,6 +616,24 @@ class Off:
                                        fail_if_missing=fail_if_missing,
                                        promote=True)
 
+    def drop_canonical_version(self, model_role, model_version: int) -> dict:
+        """Release every canonical object of (model_role, model_version).
+
+        Explicit GC for the offload/reload round-trip: ``model_version`` bumps
+        each cycle (param bytes change, so a fresh version is required), and the
+        daemon does not auto-reclaim old versions — call this once step N's
+        objects are no longer needed to keep host/NVMe bounded. Honors in-flight
+        export/restore holds (those objects are skipped and reported for retry);
+        ignores the advisory attachment refcount. Also drops the version's
+        manifest and clears the latest-sealed pointer if it referenced it.
+
+        Returns ``{"dropped", "skipped_inflight", "bytes_freed", "message"}``.
+        """
+        dropped, skipped, bytes_freed, message = self._ctx.drop_canonical_version(
+            ModelRole.parse(model_role), int(model_version))
+        return {"dropped": dropped, "skipped_inflight": skipped,
+                "bytes_freed": bytes_freed, "message": message}
+
     # ---- internal helpers ------------------------------------------------- #
     @staticmethod
     def _invalidate_to_flags(invalidate: Optional[str]) -> bool:

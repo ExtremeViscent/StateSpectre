@@ -56,6 +56,9 @@ enum class OpCode : uint16_t {
     // round-trip). Strictly read-only: never frees/migrates the object backing.
     kRequestCanonicalRestore = 27,
     kReleaseCanonicalRestore = 28,
+    // Explicit GC: release every canonical object of a (job, role, version) so
+    // host/NVMe stays bounded when model_version bumps each offload cycle.
+    kDropCanonicalVersion    = 29,
 };
 
 const char* op_name(OpCode op);

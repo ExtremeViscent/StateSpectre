@@ -129,6 +129,13 @@ struct RawClient {
         return call<ReleaseCanonicalRestoreResponse>(OpCode::kReleaseCanonicalRestore,
             encode(r), decode_ReleaseCanonicalRestoreResponse);
     }
+    DropCanonicalVersionResponse drop_version(const JobKeyWire& job, uint32_t role,
+                                              uint64_t ver) {
+        DropCanonicalVersionRequest r; r.job = job; r.model_role = role;
+        r.model_version = ver;
+        return call<DropCanonicalVersionResponse>(OpCode::kDropCanonicalVersion,
+            encode(r), decode_DropCanonicalVersionResponse);
+    }
 };
 
 struct DaemonFixture {
@@ -585,6 +592,52 @@ static void test_canonical_restore(DaemonFixture& fx) {
     CHECK(!bad.ok);
 }
 
+// --------------------------------------------------------------------------
+// Version GC: dropping a version frees its objects (host/NVMe bounded across
+// version bumps); an in-flight restore is skipped and reported.
+// --------------------------------------------------------------------------
+static void test_drop_version(DaemonFixture& fx) {
+    std::vector<int> f0;
+    RawClient c(fx.sock_path); auto r0 = c.register_rank(0, &f0);
+    for (int fd : f0) close_fd(fd);
+    auto j = c.register_job("gc_job", 72).job;
+    const uint64_t NB = 1u << 20;
+
+    // Create 3 params across two versions.
+    auto ea = c.can_evict(mk_evict(0, r0.rank_epoch, mk_key(j, 10, 1, 0, -1, NB),
+                                   DEDUP_SEMANTIC_TRUSTED));
+    do_create(c, 0, r0.rank_epoch, ea);
+    auto eb = c.can_evict(mk_evict(0, r0.rank_epoch, mk_key(j, 10, 2, 0, -1, NB),
+                                   DEDUP_SEMANTIC_TRUSTED));
+    do_create(c, 0, r0.rank_epoch, eb);
+    auto ec = c.can_evict(mk_evict(0, r0.rank_epoch, mk_key(j, 11, 1, 0, -1, NB),
+                                   DEDUP_SEMANTIC_TRUSTED));
+    do_create(c, 0, r0.rank_epoch, ec);
+
+    // Drop version 10 -> its 2 objects freed; version 11 untouched.
+    auto d = c.drop_version(j, MODEL_ROLE_POLICY_ROLLOUT, 10);
+    CHECK(d.ok);
+    CHECK_EQ(d.dropped_count, 2u);
+    CHECK_EQ(d.skipped_inflight, 0u);
+    CHECK_EQ(d.bytes_freed, 2u * NB);
+    // A dropped object can no longer be restored; the surviving one still can.
+    CHECK(!c.can_restore(0, r0.rank_epoch, ea.object_id).ok);
+    CHECK(c.can_restore(0, r0.rank_epoch, ec.object_id).ok);
+    CHECK(c.release_restore(0, r0.rank_epoch, ec.object_id).ok);
+
+    // A version with an in-flight restore is skipped (reported), not freed.
+    auto rr = c.can_restore(0, r0.rank_epoch, ec.object_id);  // hold v11 resident
+    CHECK(rr.ok);
+    auto d2 = c.drop_version(j, MODEL_ROLE_POLICY_ROLLOUT, 11);
+    CHECK(d2.ok);
+    CHECK_EQ(d2.dropped_count, 0u);
+    CHECK_EQ(d2.skipped_inflight, 1u);
+    // After releasing the restore hold, the drop succeeds.
+    CHECK(c.release_restore(0, r0.rank_epoch, ec.object_id).ok);
+    auto d3 = c.drop_version(j, MODEL_ROLE_POLICY_ROLLOUT, 11);
+    CHECK_EQ(d3.dropped_count, 1u);
+}
+
 }  // namespace
 
 int main() {
@@ -598,6 +651,7 @@ int main() {
         RUN([&]{ test_seal_and_pull(fx); });
         RUN([&]{ test_seal_fail_on_missing(fx); });
         RUN([&]{ test_canonical_restore(fx); });
+        RUN([&]{ test_drop_version(fx); });
         RUN([&]{ test_pull_over_tcp(fx); });
         RUN([&]{ test_seal_empty_ok_but_pull_rejects_unsealed(fx); });
     }

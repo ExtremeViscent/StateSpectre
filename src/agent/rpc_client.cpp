@@ -183,5 +183,11 @@ ReleaseCanonicalRestoreResponse RpcClient::release_canonical_restore(
     auto p = round_trip(sock_, OpCode::kReleaseCanonicalRestore, encode(req), nullptr);
     return decode_ReleaseCanonicalRestoreResponse(p.data(), p.size());
 }
+DropCanonicalVersionResponse RpcClient::drop_canonical_version(
+    const DropCanonicalVersionRequest& req) {
+    std::lock_guard<std::mutex> lg(mu_);
+    auto p = round_trip(sock_, OpCode::kDropCanonicalVersion, encode(req), nullptr);
+    return decode_DropCanonicalVersionResponse(p.data(), p.size());
+}
 
 }  // namespace offload

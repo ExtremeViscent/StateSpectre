@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 
 #include "export_backend.h"
 #include "metrics.h"
@@ -140,6 +141,9 @@ SealModelVersionResponse OffloadDaemon::handle_seal_model_version(
         OFLD_INFO(TAG, "promoted job=%llu role=%u -> latest sealed version=%llu",
                   (unsigned long long)uid.job_id, req.model_role,
                   (unsigned long long)req.model_version);
+        // Bound the rollout-publish path: drop sealed versions beyond the
+        // retention window (oldest first, never the just-promoted one).
+        enforce_sealed_retention(uid, req.model_role);
     }
 
     resp.ok = true;
@@ -534,6 +538,110 @@ ReleaseCanonicalRestoreResponse OffloadDaemon::handle_release_canonical_restore(
     resp.ok = true;
     resp.message = "ok";
     return resp;
+}
+
+// ---------------------------------------------------------------------------
+// DropCanonicalVersion: explicit GC of every object of (job, role, version).
+// Keeps host/NVMe bounded when model_version bumps each offload cycle. Skips
+// objects with an in-flight export/restore (reported for retry); ignores the
+// advisory attachment refcount. Also drops the version's manifest and clears
+// the latest-sealed pointer if it referenced this version.
+// ---------------------------------------------------------------------------
+DropCanonicalVersionResponse OffloadDaemon::handle_drop_canonical_version(
+    const DropCanonicalVersionRequest& req) {
+    std::lock_guard<std::mutex> lk(mu_);
+    DropCanonicalVersionResponse resp;
+    if (!cfg_.v2_enable_canonical_store) {
+        resp.ok = false; resp.message = "canonical store disabled"; return resp;
+    }
+    JobRecord* job = find_job_by_wire(req.job);
+    if (!job) { resp.ok = false; resp.message = "job not registered"; return resp; }
+    const JobUID uid = job->uid;
+
+    // Collect matching object_ids first (release_object mutates objects_).
+    std::vector<uint64_t> ids;
+    ids.reserve(objects_.size());
+    for (auto& kv : objects_) {
+        const CanonicalObject& o = kv.second;
+        if (o.key.job.tenant_id == uid.tenant_id && o.key.job.job_id == uid.job_id &&
+            o.key.job.launch_epoch == uid.launch_epoch &&
+            o.key.model_role == req.model_role &&
+            o.key.model_version == req.model_version) {
+            ids.push_back(o.object_id);
+        }
+    }
+    for (uint64_t oid : ids) {
+        CanonicalObject* o = find_object(oid);
+        if (!o) continue;
+        uint64_t nb = o->nbytes;
+        if (release_object(*o)) {
+            resp.dropped_count++;
+            resp.bytes_freed += nb;
+        } else {
+            resp.skipped_inflight++;
+        }
+    }
+
+    // Drop the manifest + latest-sealed pointer for this version.
+    VersionKey vk{uid, req.model_role, req.model_version};
+    manifests_.erase(vk);
+    RoleKey rk{uid, req.model_role};
+    auto lsit = latest_sealed_.find(rk);
+    if (lsit != latest_sealed_.end() && lsit->second == req.model_version)
+        latest_sealed_.erase(lsit);
+
+    resp.ok = true;
+    resp.message = "ok";
+    OFLD_INFO(TAG, "DropCanonicalVersion job=%llu role=%u version=%llu -> dropped=%llu "
+              "skipped=%llu bytes=%llu",
+              (unsigned long long)uid.job_id, req.model_role,
+              (unsigned long long)req.model_version,
+              (unsigned long long)resp.dropped_count,
+              (unsigned long long)resp.skipped_inflight,
+              (unsigned long long)resp.bytes_freed);
+    return resp;
+}
+
+// Drop sealed versions of (job, role) beyond retain_sealed_versions, oldest
+// first (mu_ held). 0 == unlimited/disabled. Skips the promoted latest and any
+// version with an in-flight transfer.
+void OffloadDaemon::enforce_sealed_retention(const JobUID& uid, uint32_t model_role) {
+    const uint32_t keep = cfg_.v2_retain_sealed_versions;
+    if (keep == 0) return;
+    // Gather sealed versions for (job, role), newest first.
+    std::vector<uint64_t> sealed;
+    for (auto& kv : manifests_) {
+        const VersionKey& k = kv.first;
+        if (k.job == uid && k.model_role == model_role &&
+            kv.second.state == MANIFEST_SEALED)
+            sealed.push_back(k.model_version);
+    }
+    if (sealed.size() <= keep) return;
+    std::sort(sealed.begin(), sealed.end(), std::greater<uint64_t>());
+    RoleKey rk{uid, model_role};
+    uint64_t latest = 0;
+    auto lsit = latest_sealed_.find(rk);
+    if (lsit != latest_sealed_.end()) latest = lsit->second;
+    for (size_t i = keep; i < sealed.size(); ++i) {
+        uint64_t ver = sealed[i];
+        if (ver == latest) continue;   // never evict the promoted pointer
+        std::vector<uint64_t> ids;
+        for (auto& kv : objects_) {
+            const CanonicalObject& o = kv.second;
+            if (o.key.job.tenant_id == uid.tenant_id &&
+                o.key.job.job_id == uid.job_id &&
+                o.key.job.launch_epoch == uid.launch_epoch &&
+                o.key.model_role == model_role &&
+                o.key.model_version == ver)
+                ids.push_back(o.object_id);
+        }
+        bool all_freed = true;
+        for (uint64_t oid : ids) {
+            CanonicalObject* o = find_object(oid);
+            if (o && !release_object(*o)) all_freed = false;
+        }
+        if (all_freed) manifests_.erase(VersionKey{uid, model_role, ver});
+    }
 }
 
 }  // namespace offload

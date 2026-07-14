@@ -502,8 +502,11 @@ CommitCanonicalObjectResponse OffloadDaemon::handle_commit_canonical_object(
 // ---------------------------------------------------------------------------
 // Release a canonical object's physical backing + table entry (mu_ held).
 // ---------------------------------------------------------------------------
-void OffloadDaemon::release_object(CanonicalObject& obj) {
-    if (obj.export_refcount > 0) return;  // export lease holds it
+// Release a canonical object's physical backing + table entry (mu_ held).
+// Returns false without freeing if an export or local restore is in flight
+// (the caller may retry). Ignores the advisory attachment refcount.
+bool OffloadDaemon::release_object(CanonicalObject& obj) {
+    if (obj.export_refcount > 0 || obj.restore_refcount > 0) return false;
     auto lit = locations_.find(obj.synthetic_tid);
     if (lit != locations_.end()) {
         if (lit->second.kind == OFLD_LOC_PINNED &&
@@ -523,7 +526,9 @@ void OffloadDaemon::release_object(CanonicalObject& obj) {
         if (job->pinned_bytes >= obj.nbytes) job->pinned_bytes -= obj.nbytes;
         if (job->canonical_object_count > 0) job->canonical_object_count--;
     }
+    Metrics::instance().inc(Metric::kCanonicalObjectsDropped);
     objects_.erase(obj.object_id);
+    return true;
 }
 
 }  // namespace offload

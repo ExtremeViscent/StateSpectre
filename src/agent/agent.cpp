@@ -1277,6 +1277,10 @@ GetManifestResponse OffloadAgent::get_manifest(const GetManifestRequest& r) {
 PullTensorResponse OffloadAgent::pull_tensor(const PullTensorRequest& r) {
     return impl_->rpc->pull_tensor(r);
 }
+DropCanonicalVersionResponse OffloadAgent::drop_canonical_version(
+    const DropCanonicalVersionRequest& r) {
+    return impl_->rpc->drop_canonical_version(r);
+}
 
 RestoreResult OffloadAgent::canonical_restore(uint64_t object_id, uint64_t dev_ptr,
                                               uint64_t nbytes, StreamHandle stream,

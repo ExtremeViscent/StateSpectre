@@ -217,6 +217,21 @@ static void test_canonical_restore() {
     auto lrb = encode(lresp);
     auto lrd = decode_ReleaseCanonicalRestoreResponse(lrb.data(), lrb.size());
     CHECK(lrd.ok);
+
+    DropCanonicalVersionRequest dq;
+    dq.job = mk_job(); dq.model_role = 2; dq.model_version = 1042;
+    auto db = encode(dq);
+    auto dd = decode_DropCanonicalVersionRequest(db.data(), db.size());
+    CHECK_EQ(dd.model_version, 1042u);
+    CHECK_EQ(dd.job.job_id, 912884112ull);
+    DropCanonicalVersionResponse dresp;
+    dresp.ok = true; dresp.dropped_count = 7; dresp.skipped_inflight = 1;
+    dresp.bytes_freed = 1ull << 30;
+    auto drb = encode(dresp);
+    auto drd = decode_DropCanonicalVersionResponse(drb.data(), drb.size());
+    CHECK_EQ(drd.dropped_count, 7u);
+    CHECK_EQ(drd.skipped_inflight, 1u);
+    CHECK_EQ(drd.bytes_freed, (uint64_t)(1ull << 30));
 }
 
 int main() {

@@ -29,6 +29,7 @@ const char* op_name(OpCode op) {
         case OpCode::kPullTensor:             return "PullTensor";
         case OpCode::kRequestCanonicalRestore: return "RequestCanonicalRestore";
         case OpCode::kReleaseCanonicalRestore: return "ReleaseCanonicalRestore";
+        case OpCode::kDropCanonicalVersion:    return "DropCanonicalVersion";
     }
     return "Unknown";
 }

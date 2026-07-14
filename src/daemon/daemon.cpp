@@ -694,6 +694,11 @@ void OffloadDaemon::dispatch(int fd, OpCode op, const std::vector<uint8_t>& p) {
                 decode_ReleaseCanonicalRestoreRequest(d, n)));
             break;
         }
+        case OpCode::kDropCanonicalVersion: {
+            body = encode(handle_drop_canonical_version(
+                decode_DropCanonicalVersionRequest(d, n)));
+            break;
+        }
         default:
             OFLD_WARN(TAG, "unknown opcode %u", static_cast<unsigned>(op));
             return;
